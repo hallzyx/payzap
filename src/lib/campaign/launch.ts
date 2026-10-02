@@ -19,12 +19,16 @@ export async function launchCampaign(sessionId: string): Promise<{
   if (new Date(session.expires_at).getTime() <= Date.now()) {
     return { ok: false, error: "Session expired" };
   }
-  if (
-    session.campaign_status === "refunding" ||
-    session.campaign_status === "completed" ||
-    session.campaign_status === "approved"
-  ) {
-    return { ok: false, error: "Campaign already launched" };
+  if (session.campaign_status !== "accepted") {
+    if (
+      session.campaign_status === "refunding" ||
+      session.campaign_status === "completed" ||
+      session.campaign_status === "approved" ||
+      session.campaign_status === "partial_failure"
+    ) {
+      return { ok: false, error: "Campaign already launched" };
+    }
+    return { ok: false, error: "Accept the recommended price before launching" };
   }
   if (session.recommended_price_cents == null) {
     return { ok: false, error: "Accept a recommended price first" };
@@ -182,18 +186,35 @@ export async function retryOrderRefund(
   return { ok: false, error: result.error };
 }
 
-export function acceptRecommendation(session: SessionRow) {
-  if (!session.proposed_price_cents) return;
+export function acceptRecommendation(session: SessionRow): {
+  ok: boolean;
+  error?: string;
+} {
+  if (new Date(session.expires_at).getTime() <= Date.now()) {
+    return { ok: false, error: "Session expired" };
+  }
+  if (session.campaign_status !== "analyzed") {
+    return { ok: false, error: "Analyze a campaign before accepting a price" };
+  }
+  if (!session.proposed_price_cents) {
+    return { ok: false, error: "No proposed price to accept" };
+  }
   const exposure = computeExposure({
     proposedPriceCents: session.proposed_price_cents,
     refundBudgetCents: session.refund_budget_cents,
     eligibleCount: getOrdersForSession(session.id).length,
   });
   const recommended = exposure.recommendedPriceCents;
-  if (recommended == null) return;
+  if (recommended == null) {
+    return {
+      ok: false,
+      error: "No budget-safe price to accept. Add a refund budget and analyze again.",
+    };
+  }
 
   const db = getDb();
   db.prepare(
-    `UPDATE demo_sessions SET recommended_price_cents = ?, updated_at = ? WHERE id = ?`,
+    `UPDATE demo_sessions SET campaign_status = 'accepted', recommended_price_cents = ?, updated_at = ? WHERE id = ?`,
   ).run(recommended, nowIso(), session.id);
+  return { ok: true };
 }

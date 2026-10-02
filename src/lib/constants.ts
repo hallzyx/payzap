@@ -28,6 +28,7 @@ export const BUYER_FIRST_NAMES = [
 export type CampaignStatus =
   | "idle"
   | "analyzed"
+  | "accepted"
   | "approved"
   | "refunding"
   | "completed"

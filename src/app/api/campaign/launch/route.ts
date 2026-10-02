@@ -18,16 +18,17 @@ export async function POST(req: Request) {
 
   const body = (await req.json()) as { action: "accept" | "launch" };
   if (body.action === "accept") {
-    acceptRecommendation(session);
-  } else if (body.action === "launch") {
-    const fresh = getSessionById(sessionId)!;
-    if (!fresh.recommended_price_cents) {
-      acceptRecommendation(fresh);
+    const result = acceptRecommendation(session);
+    if (!result.ok) {
+      return NextResponse.json({ error: result.error }, { status: 400 });
     }
+  } else if (body.action === "launch") {
     const result = await launchCampaign(sessionId);
     if (!result.ok) {
       return NextResponse.json({ error: result.error }, { status: 400 });
     }
+  } else {
+    return NextResponse.json({ error: "Unknown action" }, { status: 400 });
   }
 
   const updated = getSessionById(sessionId)!;

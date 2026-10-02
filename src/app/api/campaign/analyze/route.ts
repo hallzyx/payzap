@@ -21,6 +21,12 @@ export async function POST(req: Request) {
   if (session.expires_at && new Date(session.expires_at) <= new Date()) {
     return NextResponse.json({ error: "Session expired" }, { status: 410 });
   }
+  if (session.campaign_status !== "idle" && session.campaign_status !== "analyzed") {
+    return NextResponse.json(
+      { error: "Campaign is already past analysis. Reset the scenario to plan again." },
+      { status: 409 },
+    );
+  }
 
   const body = (await req.json()) as { prompt?: string };
   const prompt = body.prompt?.trim() || DEFAULT_PROMO_PROMPT;

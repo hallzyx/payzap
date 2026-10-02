@@ -9,6 +9,7 @@ export default function PayZapPage() {
   const { state, refresh } = useDemo();
   const [prompt, setPrompt] = useState(DEFAULT_PROMO_PROMPT);
   const [analyzing, setAnalyzing] = useState(false);
+  const [accepting, setAccepting] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -40,14 +41,26 @@ export default function PayZapPage() {
     await refresh();
   }
 
-  async function acceptAndLaunch() {
+  async function acceptPrice() {
     setError(null);
-    setLaunching(true);
-    await fetch("/api/campaign/launch", {
+    setAccepting(true);
+    const res = await fetch("/api/campaign/launch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ action: "accept" }),
     });
+    setAccepting(false);
+    if (!res.ok) {
+      const data = (await res.json()) as { error?: string };
+      setError(data.error ?? "Could not accept the price");
+      return;
+    }
+    await refresh();
+  }
+
+  async function launchCampaign() {
+    setError(null);
+    setLaunching(true);
     const res = await fetch("/api/campaign/launch", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -188,22 +201,38 @@ export default function PayZapPage() {
               <p className="mt-2 text-xs text-[var(--merchant-muted)]">
                 {analysis.reason}
               </p>
-              {(session.campaignStatus === "analyzed" ||
-                session.campaignStatus === "idle") && (
+              {session.campaignStatus === "analyzed" && (
                 <button
                   type="button"
-                  disabled={launching || session.expired}
-                  onClick={acceptAndLaunch}
-                  className="mt-6 rounded-lg bg-emerald-600 px-6 py-3 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40"
+                  disabled={accepting || session.expired}
+                  onClick={acceptPrice}
+                  className="mt-6 rounded-lg bg-white px-6 py-3 text-sm font-medium text-[var(--merchant-bg)] hover:bg-white/90 disabled:opacity-40"
                 >
-                  {launching
-                    ? "Launching…"
-                    : `Use ${formatUsd(analysis.recommendedPriceCents)} & launch refunds`}
+                  {accepting
+                    ? "Saving…"
+                    : `Use ${formatUsd(analysis.recommendedPriceCents)}`}
                 </button>
               )}
+              {session.campaignStatus === "accepted" && (
+                <div className="mt-6">
+                  <p className="text-sm text-emerald-200">
+                    {formatUsd(analysis.recommendedPriceCents ?? 0)} is selected.
+                    Launching changes the store price and executes partial refunds
+                    through PayPal Sandbox.
+                  </p>
+                  <button
+                    type="button"
+                    disabled={launching || session.expired}
+                    onClick={launchCampaign}
+                    className="mt-4 rounded-lg bg-emerald-600 px-6 py-3 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40"
+                  >
+                    {launching ? "Launching…" : "Launch campaign"}
+                  </button>
+                </div>
+              )}
               <p className="mt-2 text-[10px] text-[var(--merchant-muted)]">
-                Launch executes partial refunds through PayPal Sandbox. Merchant
-                approval required.
+                The recommendation stays advisory until you accept it. Launch is a
+                separate approval and moves money.
               </p>
             </div>
           )}
