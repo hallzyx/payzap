@@ -2,14 +2,13 @@
 
 import Link from "next/link";
 import { useParams } from "next/navigation";
-import { DemoBar } from "@/components/demo-bar";
 import { useDemo } from "@/components/demo-provider";
 import { formatUsd, formatUsdExact } from "@/lib/money";
 import { STORE_NAME } from "@/lib/constants";
 
 export default function BuyerOrderDetailPage() {
   const params = useParams();
-  const { state, loading } = useDemo();
+  const { state } = useDemo();
   const orderId = params.id as string;
 
   if (!state) {
@@ -30,9 +29,7 @@ export default function BuyerOrderDetailPage() {
   const showPayoff = campaignDone && order.priceAdjustmentCents > 0;
 
   return (
-    <div className="buyer-shell min-h-screen">
-      <DemoBar />
-      <main className="mx-auto max-w-2xl px-4 py-10">
+    <main className="mx-auto max-w-2xl px-4 py-10">
         {showPayoff && state.session.buyerNotified && (
           <div className="animate-fade-up mb-8 rounded-xl border border-emerald-600/30 bg-emerald-50/90 p-6">
             <p
@@ -129,7 +126,6 @@ export default function BuyerOrderDetailPage() {
             </p>
           )}
         </div>
-      </main>
-    </div>
+    </main>
   );
 }

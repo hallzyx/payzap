@@ -1,7 +1,6 @@
 "use client";
 
 import Link from "next/link";
-import { DemoBar } from "@/components/demo-bar";
 import { useDemo } from "@/components/demo-provider";
 import { formatUsd } from "@/lib/money";
 import { STORE_NAME } from "@/lib/constants";
@@ -25,9 +24,7 @@ export default function BuyerOrdersPage() {
   const demoOrder = state.orders.find((o) => o.isDemoBuyer) ?? state.orders[0];
 
   return (
-    <div className="buyer-shell min-h-screen">
-      <DemoBar />
-      <main className="mx-auto max-w-2xl px-4 py-10">
+    <main className="mx-auto max-w-2xl px-4 py-10">
         <p className="text-xs uppercase tracking-widest text-[var(--muted)]">{STORE_NAME}</p>
         <h1
           className="mt-2 text-3xl"
@@ -64,7 +61,6 @@ export default function BuyerOrdersPage() {
         >
           See what happens from the merchant side →
         </button>
-      </main>
-    </div>
+    </main>
   );
 }

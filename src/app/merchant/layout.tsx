@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { DemoBar } from "@/components/demo-bar";
+import { SessionExpired } from "@/components/session-expired";
+import { useDemo } from "@/components/demo-provider";
 import { STORE_NAME } from "@/lib/constants";
 
 const NAV = [
@@ -18,6 +20,8 @@ export default function MerchantLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
+  const { state } = useDemo();
+  const expired = Boolean(state?.session.expired);
 
   return (
     <div className="merchant-shell flex min-h-screen flex-col">
@@ -49,7 +53,9 @@ export default function MerchantLayout({
             Apps &amp; Automations
           </p>
         </aside>
-        <div className="min-w-0 flex-1">{children}</div>
+        <div className="min-w-0 flex-1">
+          {expired ? <SessionExpired /> : children}
+        </div>
       </div>
       <nav className="flex gap-2 border-t border-[var(--merchant-border)] px-4 py-2 lg:hidden">
         {NAV.map((item) => (
