@@ -63,7 +63,7 @@ export interface CampaignIntent {
   proposedPriceCents: number;
   refundBudgetCents: number | null;
   rawPrompt: string;
-  source: "llm" | "deterministic";
+  source: "openai" | "deepseek" | "deterministic";
 }
 
 export interface ExposureAnalysis {
