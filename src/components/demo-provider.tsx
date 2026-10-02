@@ -45,8 +45,12 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
   const generateDemo = useCallback(async () => {
     setLoading(true);
     const res = await fetch("/api/session", { method: "POST" });
-    const data = (await res.json()) as { state: DemoState };
+    const data = (await res.json()) as {
+      state: DemoState;
+      provisionError?: string;
+    };
     setState(data.state);
+    if (data.provisionError) setNotice(data.provisionError);
     setLoading(false);
   }, []);
 
@@ -88,6 +92,7 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
       state?: DemoState;
       error?: string;
       preview?: boolean;
+      provisionError?: string;
     };
     if (!res.ok) {
       setNotice(data.error ?? "Could not start a fresh live run");
@@ -96,11 +101,13 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
     setState(data.state ?? null);
     const noBatch = !data.state?.session.batchId;
     setNotice(
-      noBatch
-        ? "Earlier PayPal Sandbox refunds were not reversed. Live PayPal Sandbox capacity is temporarily unavailable."
-        : data.preview
-          ? "Fresh run started in preview mode on a new batch. Earlier PayPal refunds were not reversed."
-          : "Fresh live run started on a new PayPal Sandbox batch. Earlier refunds were not reversed.",
+      data.provisionError
+        ? data.provisionError
+        : noBatch
+          ? "Earlier PayPal Sandbox refunds were not reversed. Live PayPal Sandbox capacity is temporarily unavailable."
+          : data.preview
+            ? "Fresh run started in preview mode on a new batch. Earlier PayPal refunds were not reversed."
+            : "Fresh live run started on a new PayPal Sandbox batch. Earlier refunds were not reversed.",
     );
   }, []);
 

@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import { useDemo } from "@/components/demo-provider";
 import { STORE_NAME } from "@/lib/constants";
 
@@ -16,27 +16,33 @@ const SETUP_STEPS = [
 ];
 
 export default function HomePage() {
-  const { state, loading, generateDemo } = useDemo();
+  const { state, loading, notice, generateDemo, setRole } = useDemo();
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
-  const [hydrated, setHydrated] = useState(false);
-
-  useEffect(() => {
-    setHydrated(true);
-  }, []);
 
   async function handleGenerate() {
     setCreating(true);
-    for (let i = 0; i < SETUP_STEPS.length; i++) {
-      setStepIndex(i);
-      await new Promise((r) => setTimeout(r, 450));
+    try {
+      const pending = generateDemo();
+      const paypalStep = SETUP_STEPS.indexOf(
+        "Connecting PayPal Sandbox transactions",
+      );
+      for (let i = 0; i < SETUP_STEPS.length; i++) {
+        setStepIndex(i);
+        if (i === paypalStep) {
+          await pending;
+        } else {
+          await new Promise((r) => setTimeout(r, 450));
+        }
+      }
+      await pending;
+    } finally {
+      setCreating(false);
     }
-    await generateDemo();
-    setCreating(false);
   }
 
-  if (hydrated && !loading && state) {
+  if (state && !loading && !creating) {
     return (
       <main className="buyer-shell flex min-h-screen flex-col items-center justify-center px-6 py-16">
         <div className="card-buyer max-w-lg animate-fade-up p-10 text-center">
@@ -52,6 +58,12 @@ export default function HomePage() {
           <p className="mt-3 text-sm text-[var(--ink-soft)]">
             PayPal Sandbox · temporary session · no signup required
           </p>
+          {state.session.isPreview && (
+            <p className="mt-4 text-sm text-amber-800">
+              {notice ??
+                "Preview mode. Refunds stay simulated until Sandbox credentials can open real captures."}
+            </p>
+          )}
           <div className="mt-8 grid gap-4 sm:grid-cols-2">
             <div className="rounded-xl border border-[var(--ink-faint)] p-4 text-left">
               <p className="text-xs uppercase text-[var(--muted)]">Buyer</p>
@@ -60,11 +72,7 @@ export default function HomePage() {
                 type="button"
                 className="mt-4 w-full rounded-lg bg-[var(--ink)] py-2.5 text-sm text-[var(--paper)]"
                 onClick={async () => {
-                  await fetch("/api/session/role", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ role: "buyer" }),
-                  });
+                  await setRole("buyer");
                   router.push("/buyer/orders");
                 }}
               >
@@ -79,11 +87,7 @@ export default function HomePage() {
                 type="button"
                 className="mt-4 w-full rounded-lg border border-[var(--ink)] py-2.5 text-sm"
                 onClick={async () => {
-                  await fetch("/api/session/role", {
-                    method: "POST",
-                    headers: { "Content-Type": "application/json" },
-                    body: JSON.stringify({ role: "merchant" }),
-                  });
+                  await setRole("merchant");
                   router.push("/merchant/overview");
                 }}
               >

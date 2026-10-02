@@ -85,3 +85,134 @@ function delay(ms: number) {
 export function paypalConfigured(): boolean {
   return Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET);
 }
+
+export function paypalSandbox(): boolean {
+  return paypalConfigured() && process.env.PAYPAL_MODE !== "live";
+}
+
+type PaypalOrder = {
+  id?: string;
+  status?: string;
+  purchase_units?: Array<{
+    payments?: {
+      captures?: Array<{ id?: string; status?: string }>;
+    };
+  }>;
+};
+
+function completedCaptureId(order: PaypalOrder): string | null {
+  const capture = order.purchase_units?.[0]?.payments?.captures?.[0];
+  if (!capture?.id || capture.status !== "COMPLETED") return null;
+  return capture.id;
+}
+
+export function paypalErrorMessage(body: string): string {
+  try {
+    const data = JSON.parse(body) as {
+      error?: string;
+      error_description?: string;
+      message?: string;
+      details?: Array<{ issue?: string; description?: string }>;
+    };
+    if (data.error === "invalid_client") {
+      return "PayPal Sandbox rejected the app credentials. Use the Sandbox Client ID and the separate Secret from the same app.";
+    }
+    const issue = data.details?.[0]?.issue;
+    const description = data.details?.[0]?.description ?? data.message;
+    if (
+      issue === "NOT_ENABLED_FOR_CARD_PROCESSING" ||
+      issue === "PAYEE_NOT_ENABLED_FOR_CARD_PROCESSING"
+    ) {
+      return "Turn on Advanced Credit and Debit Card Payments for this Sandbox app, then generate the demo again.";
+    }
+    if (description) return description;
+  } catch {
+    /* PayPal sometimes returns plain text */
+  }
+  return "PayPal Sandbox could not open the demo captures.";
+}
+
+/**
+ * Opens one completed Sandbox sale and returns its capture id.
+ * Uses PayPal's public sandbox test card so the buyer never has to approve a checkout.
+ */
+export async function createSandboxCapture(amount: string): Promise<string> {
+  if (!paypalSandbox()) {
+    throw new Error("Automatic captures run only with PayPal Sandbox credentials.");
+  }
+  const token = await getAccessToken();
+  if (!token) {
+    throw new Error(
+      "PayPal Sandbox rejected the app credentials. Use the Sandbox Client ID and the separate Secret from the same app.",
+    );
+  }
+
+  const requestId = `payzap-${crypto.randomUUID()}`;
+  const res = await fetch(`${PAYPAL_API}/v2/checkout/orders`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "PayPal-Request-Id": requestId,
+      Prefer: "return=representation",
+    },
+    body: JSON.stringify({
+      intent: "CAPTURE",
+      payment_source: {
+        card: {
+          number: "4032039312430699",
+          expiry: "2030-12",
+          security_code: "123",
+          name: "Sandbox Buyer",
+          billing_address: {
+            address_line_1: "123 Main St",
+            admin_area_2: "San Jose",
+            admin_area_1: "CA",
+            postal_code: "95131",
+            country_code: "US",
+          },
+        },
+      },
+      purchase_units: [
+        {
+          description: "Aster Nova Pro",
+          custom_id: "payzap-demo",
+          amount: { currency_code: "USD", value: amount },
+        },
+      ],
+    }),
+  });
+
+  const text = await res.text();
+  if (!res.ok) throw new Error(paypalErrorMessage(text));
+
+  let order = JSON.parse(text) as PaypalOrder;
+  const immediate = completedCaptureId(order);
+  if (immediate) return immediate;
+
+  if (!order.id) {
+    throw new Error("PayPal Sandbox did not return a completed capture.");
+  }
+
+  const captured = await fetch(`${PAYPAL_API}/v2/checkout/orders/${order.id}/capture`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "PayPal-Request-Id": `${requestId}-capture`,
+      Prefer: "return=representation",
+    },
+  });
+  const capturedText = await captured.text();
+  if (!captured.ok) throw new Error(paypalErrorMessage(capturedText));
+  order = JSON.parse(capturedText) as PaypalOrder;
+  const id = completedCaptureId(order);
+  if (id) return id;
+
+  if (order.status === "PAYER_ACTION_REQUIRED") {
+    throw new Error(
+      "PayPal Sandbox asked the buyer to approve the payment. Turn on Advanced Credit and Debit Card Payments for this app, then generate the demo again.",
+    );
+  }
+  throw new Error("PayPal Sandbox did not return a completed capture.");
+}
