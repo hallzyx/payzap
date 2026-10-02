@@ -15,17 +15,12 @@ Open [http://localhost:3000](http://localhost:3000) and click **Generate Live De
 
 1. Copy `.env.example` to `.env.local`
 2. Set `PAYPAL_CLIENT_ID` and `PAYPAL_CLIENT_SECRET` (Sandbox app)
-3. Seed real capture IDs:
+3. On that app, enable **Advanced Credit and Debit Card Payments**
+4. Restart `npm run dev`
 
-```bash
-# Option A: import IDs you already created in Sandbox
-PAYPAL_CAPTURE_IDS=id1,id2,... npm run seed:paypal
+**Generate Live Demo** and **Fresh live run** open ten $1,000 Sandbox captures on their own. Without credentials, refunds stay in preview mode.
 
-# Option B: edit data/paypal-captures.json then
-npm run seed:demo-batches
-```
-
-Without credentials, the demo runs in **preview mode** with simulated refunds (clearly labeled).
+A manual import is still available if you already have capture IDs: `npm run seed:paypal` reads `PAYPAL_CAPTURE_IDS` from the shell, or `npm run seed:demo-batches` reads `data/paypal-captures.json`.
 
 ## Golden demo path
 
