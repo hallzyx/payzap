@@ -1,9 +1,11 @@
 # PayZap — Product Requirements Document (PRD)
 
-**Version:** 1.0  
+**Version:** 1.1  
 **Project:** PayPal AI Hackathon  
 **Product name:** PayZap  
 **Document purpose:** Give a coding agent enough product context to implement the hackathon MVP without losing the intended user experience, demo narrative, scope boundaries, or acceptance criteria.
+
+This revision records the demo as it ships: an Aster store for the buyer, a PayPal Business-style console for the merchant, automatic Sandbox captures, a guarded campaign box, and a read-only Sandbox request scanner.
 
 ---
 
@@ -78,23 +80,18 @@ The most important real behaviors are:
 - real PayPal Sandbox refunds
 - synchronized merchant and buyer views
 
-### 3.3 No fake PayPal claims
+### 3.3 Sandbox demo inside a PayPal Business frame
 
 The application must clearly identify PayPal transactions as **Sandbox** transactions.
 
-PayZap must not visually imply that it is an official PayPal product or that PayPal itself currently offers PayZap.
+The merchant console is styled like PayPal Business so PayZap sits in that sidebar as one product, next to Checkout. The PayZap page may say it is a PayPal product inside that demo dashboard. The buyer side stays the Aster store and does not wear PayPal chrome.
 
-Acceptable language:
-
-- "Integrated with PayPal"
-- "Powered by PayPal Sandbox"
-- "PayPal refund completed"
+A persistent demo bar stays above both skins. It is the frame that tells a visitor this is a temporary hackathon demo on PayPal Sandbox, not a production PayPal account.
 
 Avoid language such as:
 
 - "Official PayPal PriceGuard"
-- "PayPal offers PayZap"
-- anything that implies sponsorship, endorsement, or an existing PayPal product relationship beyond the hackathon integration
+- a claim that PayPal sponsors or endorses PayZap outside this demo
 
 ### 3.4 Judge-first UX
 
@@ -213,12 +210,12 @@ The demo contains a fictitious ecommerce brand.
 
 **Store name:** Aster  
 **Featured product:** Aster Nova Pro  
-**Category:** premium creator/professional laptop or equivalent high-value fictional electronic product  
+**Category:** closed-back reference headphone  
 **Original price:** $1,000  
 **Initial stock:** configurable seed value such as 30–50  
 **Current campaign:** none
 
-No real-world brand is required.
+The product is shown with an illustration, not a photograph of a real headphone. No real-world brand is required.
 
 ### Required ecommerce surfaces
 
@@ -227,20 +224,25 @@ The store is not intended to be a full ecommerce implementation.
 Only implement pages needed for the demo story:
 
 #### Buyer
-- Orders
+- Store header with the Aster wordmark
+- Orders, including the live shop price
 - Order Detail
 
 #### Merchant
-- Overview
-- Products
-- Orders
-- PayZap
+The sidebar is grouped like a PayPal Business account:
 
-Optional lightweight pages or navigation placeholders are acceptable only if they improve immersion without increasing build risk.
+- Home: Summary
+- Activity: Orders
+- Catalog: Products
+- PayPal products: PayZap, Checkout
+
+Checkout shows the current price and a PayPal button preview. It does not take a new card payment. The ten protected payments are the Sandbox captures opened when the demo starts.
 
 ---
 
 ## 8. Buyer Experience — Before the Campaign
+
+The buyer skin is the Aster store: warm paper, the store wordmark, and the headphone illustration. It should feel like the account page after a purchase, not like an admin tool.
 
 ### User Story 8.1 — See an existing purchase
 
@@ -298,21 +300,23 @@ This should switch role without requiring logout/login during the demo.
 
 ## 9. Merchant Experience — Store Context
 
+The merchant skin is a light PayPal Business dashboard. PayZap is one product in that sidebar, beside Checkout, so a visitor finds it the way they would find another PayPal product.
+
 ### User Story 9.1 — Merchant overview
 
-As the merchant, I want the environment to look like a normal ecommerce admin so that PayZap feels like part of my existing operations.
+As the merchant, I want the environment to look like the PayPal account I already use so that PayZap feels like part of my existing operations.
 
 #### Acceptance criteria
 
 Merchant navigation contains:
 
-- Overview
-- Products
+- Summary
 - Orders
-- Apps & Automations or an equivalent area
-- PayZap
+- Products
+- PayZap, labeled as price protection
+- Checkout, labeled as online payments
 
-The user should be able to discover PayZap naturally from the sidebar.
+The user should be able to discover PayZap naturally from the sidebar. The demo buyer's order is labeled so it can be picked out of the ten.
 
 ### User Story 9.2 — Product state
 
@@ -393,6 +397,32 @@ Default/prefilled demo prompt:
   - proposed promotional price
   - maximum refund budget
 - Parsed intent should be inspectable or reflected clearly in the result.
+- The box accepts one short sentence: at most 280 characters, with a price and a campaign word such as price, promotion, refund, budget, or sale.
+- Helper copy tells the merchant that the box is for the sale price and the refund budget.
+
+### Public-demo guardrails
+
+The campaign box is the only model input in the demo. A visitor must not be able to spend tokens on unrelated requests.
+
+- Text that is not a price campaign is rejected before any model call.
+- Instructions that try to change the model's task are rejected before any model call.
+- Request bodies larger than 2,000 bytes are rejected.
+- Repeating the sentence that was just analyzed does not call the model again.
+- Each session may spend at most 6 model calls, with at least 3 seconds between them.
+- The model is told to return only the promotional price and the refund budget. Its reply is capped at 80 tokens.
+- If the reply does not contain a proposed price above zero, PayZap does not use it.
+
+### Model providers
+
+Intent extraction uses DeepSeek Flash when `DEEPSEEK_API_KEY` is set, or when `AI_PROVIDER=deepseek`. Thinking is disabled.
+
+It uses GPT-6 Luna when `OPENAI_API_KEY` is set, or when `AI_PROVIDER=openai`, and DeepSeek was not selected. Reasoning effort is none.
+
+If both keys exist and `AI_PROVIDER` is unset, DeepSeek is used.
+
+If no provider is configured, a deterministic parser reads the same two numbers from the sentence.
+
+The model never decides refund cents. The refund is always the original price minus the approved new price.
 
 ---
 
@@ -603,6 +633,21 @@ If one refund fails:
 - user can retry an eligible failed refund
 - retry must not duplicate already successful refunds
 
+### User Story 16.3 — Watch the Sandbox calls
+
+As a presenter, I want a read-only window of the PayPal Sandbox requests so that the audience can see the ten payments and the later refunds without leaving the demo.
+
+#### Acceptance criteria
+
+- A Sandbox control sits at the bottom-right corner on every screen.
+- Opening it shows the calls for this session only.
+- Generating the demo lists the ten $1,000 sales, including the order that belongs to this session.
+- Launching the campaign appends each partial refund as it is sent.
+- The window cannot start a payment, a refund, or any other PayPal call.
+- Cards, access tokens, and request bodies are not shown.
+- Sales that were already completed before the scanner existed are labeled as earlier Sandbox history.
+- Preview mode says the call was not sent to PayPal.
+
 ---
 
 ## 17. Merchant Orders After Refunds
@@ -767,8 +812,6 @@ The reset UI must not imply that PayPal refunds themselves were reversed.
 
 ## 22. PayPal Sandbox Batch Model
 
-To keep the live demo fast and reliable, PayZap may use pre-generated Sandbox transaction batches.
-
 Each batch represents:
 
 - 10 completed PayPal Sandbox captures
@@ -776,14 +819,19 @@ Each batch represents:
 - each capture is unused for the PayZap refund scenario
 - batch status: Ready, Reserved, Consumed, Invalid
 
+**Generate Live Demo** and **Fresh live run** open those ten captures themselves when Sandbox credentials are present and `PAYPAL_MODE` is not `live`. Automatic provisioning never runs against the live PayPal API. The running app does not read `PAYPAL_CAPTURE_IDS`.
+
+A manual import remains available for captures that already exist: `npm run seed:paypal` reads `PAYPAL_CAPTURE_IDS` from the shell, and `npm run seed:demo-batches` reads `data/paypal-captures.json`.
+
 When a live demo is generated:
 
-1. reserve an available batch
-2. associate its 10 captures with the session's 10 protected orders
-3. prevent other sessions from using the same batch
-4. mark it Consumed after refunds begin or after the live run is committed
+1. reuse a Ready batch of real captures, or open ten new Sandbox sales
+2. reserve that batch for this session
+3. associate its 10 captures with the session's 10 protected orders
+4. prevent other sessions from using the same batch
+5. mark it Consumed after refunds begin or after a fresh live run replaces it
 
-If no batch is available, do not silently fake real refunds. Show a clear fallback/error state.
+If Sandbox credentials are missing or PayPal rejects the captures, the session stays in preview. Preview refunds are simulated and labeled as such. PayZap does not describe a simulated refund as a completed PayPal refund.
 
 ---
 
@@ -804,6 +852,10 @@ The visitor may still explore a non-financial preview only if clearly labeled as
 - expose retry
 - use idempotent behavior
 - do not double-refund successful orders
+
+### Campaign box is used for something else
+
+Reject the text before calling a model. Tell the visitor that PayZap only reads a sale price and a refund budget. Do not answer the unrelated request.
 
 ### AI response is malformed
 
@@ -887,6 +939,11 @@ MVP includes:
 24. Session expiry
 25. Scenario reset
 26. Fresh live-run / fresh PayPal batch handling
+27. Automatic Sandbox captures when a live demo starts
+28. Checkout product page that shows the live price
+29. Campaign-box guardrails for a public demo
+30. DeepSeek Flash or GPT-6 Luna for intent only, with a deterministic fallback
+31. Read-only Sandbox request scanner
 
 ---
 
@@ -980,6 +1037,7 @@ The finished product should make the following evidence easy to capture in the d
 - partial refunds executed through PayPal Sandbox
 - PayPal refund states visible in the application
 - transaction/refund identifiers available for verification
+- a read-only scanner can show the ten sales and the refunds for the current session
 
 ### AI depth
 
@@ -1034,11 +1092,11 @@ Avoid:
 
 ### Roles must be visually distinct
 
-Buyer should feel like ecommerce.
+Buyer should feel like the Aster store after a purchase.
 
-Merchant should feel like an admin console.
+Merchant should feel like a PayPal Business account.
 
-PayZap should feel like a specialized merchant application.
+PayZap should feel like one product inside that account, not a separate dashboard with its own chrome.
 
 ### Financial numbers must be visually prominent
 
@@ -1070,6 +1128,8 @@ Because PayZap triggers financial actions:
 - failed refunds are not hidden
 - duplicate execution is prevented
 - session expiration prevents stale financial actions
+- the campaign box refuses prompts that are not a short price-and-budget sentence
+- the Sandbox scanner is read-only and cannot send a payment
 
 AI must not directly invent refund amounts.
 
