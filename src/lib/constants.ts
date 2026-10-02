@@ -1,9 +1,11 @@
 export const SESSION_DURATION_MS = 30 * 60 * 1000;
 export const SESSION_COOKIE = "payzap_session";
+export const PAYPAL_WATCH_COOKIE = "payzap_watch";
 export const PROTECTION_WINDOW_DAYS = 7;
 
 export const STORE_NAME = "Aster";
 export const PRODUCT_NAME = "Aster Nova Pro";
+export const PRODUCT_TAGLINE = "Closed-back reference headphone";
 export const PRODUCT_SKU = "ASTER-NOVA-PRO";
 export const ORIGINAL_PRICE_CENTS = 100_000;
 export const INITIAL_STOCK = 42;
@@ -11,6 +13,9 @@ export const PROTECTED_ORDER_COUNT = 10;
 
 export const DEFAULT_PROMO_PROMPT =
   "Launch a weekend campaign at $800, but keep total price-protection refunds under $1,500.";
+
+/** The campaign box only accepts a short price-and-budget sentence. */
+export const CAMPAIGN_PROMPT_MAX_CHARS = 280;
 
 export const BUYER_FIRST_NAMES = [
   "Jordan",

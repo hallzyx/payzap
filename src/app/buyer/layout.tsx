@@ -4,6 +4,7 @@ import { useRouter } from "next/navigation";
 import { useEffect } from "react";
 import { DemoBar } from "@/components/demo-bar";
 import { SessionExpired } from "@/components/session-expired";
+import { StoreHeader } from "@/components/store-header";
 import { useDemo } from "@/components/demo-provider";
 
 export default function BuyerLayout({
@@ -29,7 +30,10 @@ export default function BuyerLayout({
           <SessionExpired />
         </main>
       ) : (
-        children
+        <>
+          <StoreHeader />
+          {children}
+        </>
       )}
     </div>
   );

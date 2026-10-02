@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import { useDemo } from "@/components/demo-provider";
-import { DEFAULT_PROMO_PROMPT } from "@/lib/constants";
+import { CAMPAIGN_PROMPT_MAX_CHARS, DEFAULT_PROMO_PROMPT } from "@/lib/constants";
 import { formatUsd } from "@/lib/money";
 
 export default function PayZapPage() {
@@ -96,7 +96,7 @@ export default function PayZapPage() {
   }
 
   return (
-    <div className="max-w-3xl">
+    <div className="mx-auto max-w-3xl">
       <div className="flex items-center gap-3">
         <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--payzap-accent)] text-lg font-bold text-white">
           PZ
@@ -104,13 +104,13 @@ export default function PayZapPage() {
         <div>
           <h1 className="text-2xl font-semibold">PayZap</h1>
           <p className="text-sm text-[var(--merchant-muted)]">
-            Price protection · Powered by PayPal Sandbox
+            A PayPal product · price protection for {product.name}
           </p>
         </div>
       </div>
 
       {session.isPreview && !session.batchId && (
-        <div className="mt-6 rounded-lg border border-amber-600/40 bg-amber-950/30 p-4 text-sm text-amber-200">
+        <div className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
           Live PayPal Sandbox capacity is temporarily unavailable. Refunds will
           run in clearly labeled preview simulation.
         </div>
@@ -146,23 +146,27 @@ export default function PayZapPage() {
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           disabled={!canAnalyze || session.expired}
+          maxLength={CAMPAIGN_PROMPT_MAX_CHARS}
           rows={3}
-          className="mt-4 w-full rounded-lg border border-[var(--merchant-border)] bg-[var(--merchant-bg)] p-3 text-sm text-white"
+          className="mt-4 w-full rounded-lg border border-[var(--merchant-border)] bg-white p-3 text-sm text-[var(--merchant-text)]"
         />
+        <p className="mt-2 text-xs text-[var(--merchant-muted)]">
+          One short sentence: the sale price and the refund budget.
+        </p>
         <button
           type="button"
           disabled={!canAnalyze || analyzing || session.expired}
           onClick={analyze}
-          className="mt-4 rounded-lg bg-white/10 px-5 py-2 text-sm hover:bg-white/15 disabled:opacity-40"
+          className="mt-4 rounded-full bg-[var(--payzap-accent)] px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
         >
           {analyzing ? "Analyzing impact…" : "Analyze Impact"}
         </button>
-        {error && <p className="mt-3 text-sm text-red-400">{error}</p>}
+        {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
       </div>
 
       {showRisk && analysis && (
         <div className="card-merchant mt-6 animate-fade-up p-6">
-          <p className="text-xs uppercase text-red-400">Campaign risk</p>
+          <p className="text-xs uppercase text-red-700">Campaign risk</p>
           <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
             <div>
               <dt className="text-[var(--merchant-muted)]">Proposed price</dt>
@@ -176,7 +180,7 @@ export default function PayZapPage() {
             </div>
             <div>
               <dt className="text-[var(--merchant-muted)]">Expected refunds</dt>
-              <dd className="tabular-nums text-lg text-red-300">
+              <dd className="tabular-nums text-lg text-red-700">
                 {formatUsd(analysis.totalExposureCents)}
               </dd>
             </div>
@@ -190,13 +194,13 @@ export default function PayZapPage() {
             </div>
           </dl>
           {analysis.exceedsBudget && (
-            <p className="mt-4 text-sm font-medium text-red-300">
+            <p className="mt-4 text-sm font-medium text-red-700">
               Exceeds budget by {formatUsd(analysis.overByCents)}
             </p>
           )}
           {analysis.recommendedPriceCents != null && (
             <div className="mt-6 border-t border-[var(--merchant-border)] pt-6">
-              <p className="text-xs uppercase text-emerald-400">Recommendation</p>
+              <p className="text-xs uppercase text-emerald-800">Recommendation</p>
               <p className="mt-2 text-2xl tabular-nums">
                 {formatUsd(analysis.recommendedPriceCents)}
               </p>
@@ -213,7 +217,7 @@ export default function PayZapPage() {
                   type="button"
                   disabled={accepting || session.expired}
                   onClick={acceptPrice}
-                  className="mt-6 rounded-lg bg-white px-6 py-3 text-sm font-medium text-[var(--merchant-bg)] hover:bg-white/90 disabled:opacity-40"
+                  className="mt-6 rounded-full bg-[var(--paypal-navy)] px-6 py-3 text-sm font-medium text-white disabled:opacity-40"
                 >
                   {accepting
                     ? "Saving…"
@@ -222,7 +226,7 @@ export default function PayZapPage() {
               )}
               {session.campaignStatus === "accepted" && (
                 <div className="mt-6">
-                  <p className="text-sm text-emerald-200">
+                  <p className="text-sm text-emerald-800">
                     {formatUsd(analysis.recommendedPriceCents ?? 0)} is selected.
                     Launching changes the store price and executes partial refunds
                     through PayPal Sandbox.
@@ -231,7 +235,7 @@ export default function PayZapPage() {
                     type="button"
                     disabled={launching || session.expired}
                     onClick={launchCampaign}
-                    className="mt-4 rounded-lg bg-emerald-600 px-6 py-3 text-sm font-medium text-white hover:bg-emerald-500 disabled:opacity-40"
+                    className="mt-4 rounded-full bg-emerald-700 px-6 py-3 text-sm font-medium text-white disabled:opacity-40"
                   >
                     {launching ? "Launching…" : "Launch campaign"}
                   </button>

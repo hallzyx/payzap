@@ -9,12 +9,13 @@
   --muted: #7a6f62;
   --accent-live: #c45c26;
   --accent-amber: #d4a017;
-  --merchant-bg: #121418;
-  --merchant-panel: #1a1d24;
-  --merchant-border: #2a303c;
-  --merchant-text: #e8eaef;
-  --merchant-muted: #8b93a7;
-  --payzap-accent: #3d8bfd;
+  --merchant-bg: #f4f6f8;
+  --merchant-panel: #ffffff;
+  --merchant-border: #e1e6ec;
+  --merchant-text: #001c40;
+  --merchant-muted: #5c6770;
+  --payzap-accent: #0070ba;
+  --paypal-navy: #001c64;
   --surface-elevated: #faf7f2;
 }
 
@@ -40,6 +41,17 @@ body {
   background: var(--merchant-bg);
   color: var(--merchant-text);
   min-height: 100vh;
+}
+
+.merchant-side {
+  background: #fff;
+  border-right: 1px solid var(--merchant-border);
+}
+
+.store-mark {
+  font-family: var(--font-display), Georgia, serif;
+  letter-spacing: 0.28em;
+  font-weight: 560;
 }
 
 .demo-pill {
@@ -77,6 +89,13 @@ body {
   background: var(--merchant-panel);
   border: 1px solid var(--merchant-border);
   border-radius: 0.75rem;
+  box-shadow: 0 1px 2px rgba(0, 28, 64, 0.04);
+}
+
+button:focus-visible,
+a:focus-visible {
+  outline: 2px solid var(--payzap-accent);
+  outline-offset: 2px;
 }
 
 .metric-hero {
