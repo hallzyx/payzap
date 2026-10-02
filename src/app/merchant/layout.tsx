@@ -1,7 +1,8 @@
 "use client";
 
 import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { usePathname, useRouter } from "next/navigation";
+import { useEffect } from "react";
 import { DemoBar } from "@/components/demo-bar";
 import { SessionExpired } from "@/components/session-expired";
 import { useDemo } from "@/components/demo-provider";
@@ -20,8 +21,15 @@ export default function MerchantLayout({
   children: React.ReactNode;
 }) {
   const pathname = usePathname();
-  const { state } = useDemo();
+  const router = useRouter();
+  const { state, loading } = useDemo();
   const expired = Boolean(state?.session.expired);
+
+  useEffect(() => {
+    if (!loading && !state) router.replace("/");
+  }, [loading, state, router]);
+
+  if (!loading && !state) return null;
 
   return (
     <div className="merchant-shell flex min-h-screen flex-col">

@@ -6,10 +6,8 @@ import { formatUsd } from "@/lib/money";
 import { STORE_NAME } from "@/lib/constants";
 
 export default function MerchantOverviewPage() {
-  const { state } = useDemo();
-  if (!state) {
-    return <p className="p-4">Generate a demo from the home page.</p>;
-  }
+  const { state, loading } = useDemo();
+  if (loading || !state) return null;
 
   return (
     <div>

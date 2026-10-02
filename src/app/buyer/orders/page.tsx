@@ -1,12 +1,14 @@
 "use client";
 
 import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useDemo } from "@/components/demo-provider";
 import { formatUsd } from "@/lib/money";
 import { STORE_NAME } from "@/lib/constants";
 
 export default function BuyerOrdersPage() {
   const { state, loading, setRole } = useDemo();
+  const router = useRouter();
 
   if (loading && !state) {
     return <p className="p-8">Loading…</p>;
@@ -53,9 +55,9 @@ export default function BuyerOrdersPage() {
 
         <button
           type="button"
-          onClick={() => {
-            setRole("merchant");
-            window.location.href = "/merchant/overview";
+          onClick={async () => {
+            await setRole("merchant");
+            router.push("/merchant/overview");
           }}
           className="mt-10 text-sm text-[var(--accent-live)] underline"
         >

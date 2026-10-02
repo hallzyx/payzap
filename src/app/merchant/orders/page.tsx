@@ -1,11 +1,12 @@
 "use client";
 
-import Link from "next/link";
+import { useRouter } from "next/navigation";
 import { useDemo } from "@/components/demo-provider";
 import { formatUsd, formatUsdExact } from "@/lib/money";
 
 export default function MerchantOrdersPage() {
-  const { state } = useDemo();
+  const { state, setRole } = useDemo();
+  const router = useRouter();
   if (!state) return null;
 
   return (
@@ -83,9 +84,16 @@ export default function MerchantOrdersPage() {
         {formatUsd(100_000)}, adjustment −{formatUsdExact(15_000)}, effective{" "}
         {formatUsd(85_000)}.
       </p>
-      <Link href="/buyer/orders" className="mt-4 inline-block text-sm text-[var(--payzap-accent)]">
+      <button
+        type="button"
+        className="mt-4 text-sm text-[var(--payzap-accent)]"
+        onClick={async () => {
+          await setRole("buyer");
+          router.push("/buyer/orders");
+        }}
+      >
         Switch to buyer view →
-      </Link>
+      </button>
     </div>
   );
 }

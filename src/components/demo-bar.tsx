@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import { usePathname, useRouter } from "next/navigation";
 import { useDemo } from "@/components/demo-provider";
 import { STORE_NAME } from "@/lib/constants";
 
@@ -14,7 +15,19 @@ function formatRemaining(ms: number) {
 export function DemoBar() {
   const { state, notice, setRole, resetScenario, freshLiveRun, clearNotice } =
     useDemo();
+  const pathname = usePathname();
+  const router = useRouter();
   if (!state) return null;
+
+  async function openBuyer() {
+    await setRole("buyer");
+    if (!pathname.startsWith("/buyer")) router.push("/buyer/orders");
+  }
+
+  async function openMerchant() {
+    await setRole("merchant");
+    if (!pathname.startsWith("/merchant")) router.push("/merchant/overview");
+  }
 
   const { session } = state;
   const role = session.role;
@@ -52,7 +65,7 @@ export function DemoBar() {
           <button
             type="button"
             disabled={expired}
-            onClick={() => setRole("buyer")}
+            onClick={() => openBuyer()}
             className={`demo-pill ${role === "buyer" ? "demo-pill-active" : ""} disabled:opacity-40`}
           >
             Buyer
@@ -60,7 +73,7 @@ export function DemoBar() {
           <button
             type="button"
             disabled={expired}
-            onClick={() => setRole("merchant")}
+            onClick={() => openMerchant()}
             className={`demo-pill ${role === "merchant" ? "demo-pill-active" : ""} disabled:opacity-40`}
           >
             Merchant
