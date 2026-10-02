@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useDemo } from "@/components/demo-provider";
 import { STORE_NAME } from "@/lib/constants";
 
@@ -20,6 +20,11 @@ export default function HomePage() {
   const router = useRouter();
   const [creating, setCreating] = useState(false);
   const [stepIndex, setStepIndex] = useState(0);
+  const [hydrated, setHydrated] = useState(false);
+
+  useEffect(() => {
+    setHydrated(true);
+  }, []);
 
   async function handleGenerate() {
     setCreating(true);
@@ -31,7 +36,7 @@ export default function HomePage() {
     setCreating(false);
   }
 
-  if (!loading && state) {
+  if (hydrated && !loading && state) {
     return (
       <main className="buyer-shell flex min-h-screen flex-col items-center justify-center px-6 py-16">
         <div className="card-buyer max-w-lg animate-fade-up p-10 text-center">
