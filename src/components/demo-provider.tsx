@@ -44,6 +44,7 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
 
   const generateDemo = useCallback(async () => {
     setLoading(true);
+    await fetch("/api/paypal/watch", { method: "POST" }).catch(() => null);
     const res = await fetch("/api/session", { method: "POST" });
     const data = (await res.json()) as {
       state: DemoState;

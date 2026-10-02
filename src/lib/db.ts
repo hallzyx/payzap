@@ -73,6 +73,37 @@ function migrate(database: Database.Database) {
 
     CREATE INDEX IF NOT EXISTS idx_orders_session ON demo_orders(session_id);
     CREATE INDEX IF NOT EXISTS idx_batches_status ON paypal_batches(status);
+
+    CREATE TABLE IF NOT EXISTS paypal_traces (
+      id TEXT PRIMARY KEY,
+      session_id TEXT,
+      watch_id TEXT,
+      batch_id TEXT,
+      kind TEXT NOT NULL,
+      method TEXT NOT NULL,
+      path TEXT NOT NULL,
+      status_code INTEGER,
+      ok INTEGER NOT NULL,
+      simulated INTEGER NOT NULL DEFAULT 0,
+      observed INTEGER NOT NULL DEFAULT 1,
+      amount TEXT,
+      currency TEXT,
+      capture_id TEXT,
+      refund_id TEXT,
+      summary TEXT,
+      duration_ms INTEGER,
+      seq INTEGER NOT NULL,
+      created_at TEXT NOT NULL
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_traces_session ON paypal_traces(session_id, seq);
+    CREATE INDEX IF NOT EXISTS idx_traces_watch ON paypal_traces(watch_id, seq);
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_traces_sale
+      ON paypal_traces(session_id, capture_id)
+      WHERE kind = 'sale' AND capture_id IS NOT NULL AND session_id IS NOT NULL;
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_traces_refund
+      ON paypal_traces(refund_id)
+      WHERE kind = 'refund' AND refund_id IS NOT NULL;
   `);
 
   topUpReadyBatches(database);

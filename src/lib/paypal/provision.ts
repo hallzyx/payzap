@@ -2,6 +2,7 @@ import { ORIGINAL_PRICE_CENTS, PROTECTED_ORDER_COUNT } from "@/lib/constants";
 import { getDb } from "@/lib/db";
 import { newId, nowIso } from "@/lib/ids";
 import { createSandboxCapture, paypalSandbox } from "@/lib/paypal/client";
+import type { PaypalCallScope } from "@/lib/paypal/trace";
 
 export type ProvisionResult =
   | { status: "skipped" }
@@ -19,14 +20,18 @@ function hasReadyLiveBatch(): boolean {
   return Boolean(row);
 }
 
-async function mintCaptures(count: number, amount: string): Promise<string[]> {
+async function mintCaptures(
+  count: number,
+  amount: string,
+  scope: PaypalCallScope,
+): Promise<string[]> {
   const ids: string[] = [];
   let lastError = "PayPal Sandbox could not open the demo captures.";
 
   for (let attempt = 0; attempt < 2 && ids.length < count; attempt++) {
     const missing = count - ids.length;
     const settled = await Promise.allSettled(
-      Array.from({ length: missing }, () => createSandboxCapture(amount)),
+      Array.from({ length: missing }, () => createSandboxCapture(amount, scope)),
     );
     let authFailure = false;
     for (const result of settled) {
@@ -51,7 +56,9 @@ async function mintCaptures(count: number, amount: string): Promise<string[]> {
 }
 
 /** Creates a Ready batch of real Sandbox captures when the demo is about to start. */
-export async function ensureReadyLiveBatch(): Promise<ProvisionResult> {
+export async function ensureReadyLiveBatch(
+  scope: PaypalCallScope = {},
+): Promise<ProvisionResult> {
   if (!paypalSandbox()) return { status: "skipped" };
 
   const clientId = process.env.PAYPAL_CLIENT_ID?.trim();
@@ -67,15 +74,16 @@ export async function ensureReadyLiveBatch(): Promise<ProvisionResult> {
   if (hasReadyLiveBatch()) return { status: "ready" };
 
   const amount = (ORIGINAL_PRICE_CENTS / 100).toFixed(2);
+  const batchId = newId("batch");
   try {
-    const ids = await mintCaptures(PROTECTED_ORDER_COUNT, amount);
+    const ids = await mintCaptures(PROTECTED_ORDER_COUNT, amount, { ...scope, batchId });
     const ts = nowIso();
     getDb()
       .prepare(
         `INSERT INTO paypal_batches (id, status, capture_ids_json, reserved_session_id, created_at, updated_at)
          VALUES (?, 'Ready', ?, NULL, ?, ?)`,
       )
-      .run(newId("batch"), JSON.stringify(ids), ts, ts);
+      .run(batchId, JSON.stringify(ids), ts, ts);
     return { status: "ready" };
   } catch (err) {
     return {

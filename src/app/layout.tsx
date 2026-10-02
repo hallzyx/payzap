@@ -1,6 +1,7 @@
 import type { Metadata } from "next";
 import { DM_Sans, Fraunces } from "next/font/google";
 import { DemoProvider } from "@/components/demo-provider";
+import { SandboxScanner } from "@/components/sandbox-scanner";
 import "./globals.css";
 
 const fraunces = Fraunces({
@@ -23,7 +24,10 @@ export default function RootLayout({ children }: LayoutProps<"/">) {
   return (
     <html lang="en" className={`${fraunces.variable} ${dmSans.variable} h-full`}>
       <body className="min-h-full antialiased">
-        <DemoProvider>{children}</DemoProvider>
+        <DemoProvider>
+          {children}
+          <SandboxScanner />
+        </DemoProvider>
       </body>
     </html>
   );

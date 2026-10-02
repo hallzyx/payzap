@@ -1,3 +1,5 @@
+import { recordPaypalTrace, type PaypalCallScope } from "@/lib/paypal/trace";
+
 const PAYPAL_API =
   process.env.PAYPAL_MODE === "live"
     ? "https://api-m.paypal.com"
@@ -36,50 +38,95 @@ export async function refundCapturePartial(params: {
   currency?: string;
   idempotencyKey: string;
   allowSimulate?: boolean;
+  scope?: PaypalCallScope;
 }): Promise<RefundResult> {
   const token = await getAccessToken();
   const amount = (params.amountCents / 100).toFixed(2);
   const currency = params.currency ?? "USD";
+  const path = `/v2/payments/captures/${params.captureId}/refund`;
 
   if (!token) {
     if (params.allowSimulate && params.captureId.startsWith("SANDBOX-CAP-")) {
       await delay(400);
-      return {
+      const refundId = `SIM-${params.idempotencyKey.slice(0, 12)}`;
+      rememberCall({
+        scope: params.scope,
+        kind: "refund",
+        path,
+        statusCode: null,
         ok: true,
-        refundId: `SIM-${params.idempotencyKey.slice(0, 12)}`,
         simulated: true,
-      };
+        amount,
+        currency,
+        captureId: params.captureId,
+        refundId,
+        summary: "Preview only. Not sent to PayPal.",
+        durationMs: 400,
+      });
+      return { ok: true, refundId, simulated: true };
     }
     return { ok: false, error: "PayPal credentials unavailable" };
   }
 
-  const res = await fetch(
-    `${PAYPAL_API}/v2/payments/captures/${params.captureId}/refund`,
-    {
-      method: "POST",
-      headers: {
-        Authorization: `Bearer ${token}`,
-        "Content-Type": "application/json",
-        "PayPal-Request-Id": params.idempotencyKey,
-      },
-      body: JSON.stringify({
-        amount: { value: amount, currency_code: currency },
-        note_to_payer: "PayZap price protection adjustment",
-      }),
+  const started = Date.now();
+  const res = await fetch(`${PAYPAL_API}${path}`, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+      "PayPal-Request-Id": params.idempotencyKey,
     },
-  );
+    body: JSON.stringify({
+      amount: { value: amount, currency_code: currency },
+      note_to_payer: "PayZap price protection adjustment",
+    }),
+  });
 
   if (!res.ok) {
     const text = await res.text();
+    const error = paypalErrorMessage(text);
+    rememberCall({
+      scope: params.scope,
+      kind: "refund",
+      path,
+      statusCode: res.status,
+      ok: false,
+      amount,
+      currency,
+      captureId: params.captureId,
+      summary: error,
+      durationMs: Date.now() - started,
+    });
     return { ok: false, error: text.slice(0, 200) };
   }
 
   const data = (await res.json()) as { id?: string };
+  rememberCall({
+    scope: params.scope,
+    kind: "refund",
+    path,
+    statusCode: res.status,
+    ok: true,
+    amount,
+    currency,
+    captureId: params.captureId,
+    refundId: data.id ?? null,
+    summary: "COMPLETED",
+    durationMs: Date.now() - started,
+  });
   return { ok: true, refundId: data.id };
 }
 
 function delay(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
+}
+
+function rememberCall(input: Parameters<typeof recordPaypalTrace>[0]) {
+  try {
+    recordPaypalTrace(input);
+  } catch {
+    /* The scanner is read-only. A log failure must not stop the payment. */
+  }
 }
 
 export function paypalConfigured(): boolean {
@@ -136,7 +183,10 @@ export function paypalErrorMessage(body: string): string {
  * Opens one completed Sandbox sale and returns its capture id.
  * Uses PayPal's public sandbox test card so the buyer never has to approve a checkout.
  */
-export async function createSandboxCapture(amount: string): Promise<string> {
+export async function createSandboxCapture(
+  amount: string,
+  scope: PaypalCallScope = {},
+): Promise<string> {
   if (!paypalSandbox()) {
     throw new Error("Automatic captures run only with PayPal Sandbox credentials.");
   }
@@ -148,6 +198,7 @@ export async function createSandboxCapture(amount: string): Promise<string> {
   }
 
   const requestId = `payzap-${crypto.randomUUID()}`;
+  const started = Date.now();
   const res = await fetch(`${PAYPAL_API}/v2/checkout/orders`, {
     method: "POST",
     headers: {
@@ -184,17 +235,42 @@ export async function createSandboxCapture(amount: string): Promise<string> {
   });
 
   const text = await res.text();
-  if (!res.ok) throw new Error(paypalErrorMessage(text));
+  if (!res.ok) {
+    rememberCall({
+      scope,
+      kind: "sale",
+      path: "/v2/checkout/orders",
+      statusCode: res.status,
+      ok: false,
+      amount,
+      summary: paypalErrorMessage(text),
+      durationMs: Date.now() - started,
+    });
+    throw new Error(paypalErrorMessage(text));
+  }
 
   let order = JSON.parse(text) as PaypalOrder;
   const immediate = completedCaptureId(order);
+  rememberCall({
+    scope,
+    kind: "sale",
+    path: "/v2/checkout/orders",
+    statusCode: res.status,
+    ok: true,
+    amount,
+    captureId: immediate,
+    summary: immediate ? "COMPLETED" : order.status ?? "CREATED",
+    durationMs: Date.now() - started,
+  });
   if (immediate) return immediate;
 
   if (!order.id) {
     throw new Error("PayPal Sandbox did not return a completed capture.");
   }
 
-  const captured = await fetch(`${PAYPAL_API}/v2/checkout/orders/${order.id}/capture`, {
+  const captureStarted = Date.now();
+  const capturePath = `/v2/checkout/orders/${order.id}/capture`;
+  const captured = await fetch(`${PAYPAL_API}${capturePath}`, {
     method: "POST",
     headers: {
       Authorization: `Bearer ${token}`,
@@ -204,10 +280,35 @@ export async function createSandboxCapture(amount: string): Promise<string> {
     },
   });
   const capturedText = await captured.text();
-  if (!captured.ok) throw new Error(paypalErrorMessage(capturedText));
+  if (!captured.ok) {
+    rememberCall({
+      scope,
+      kind: "sale",
+      path: capturePath,
+      statusCode: captured.status,
+      ok: false,
+      amount,
+      summary: paypalErrorMessage(capturedText),
+      durationMs: Date.now() - captureStarted,
+    });
+    throw new Error(paypalErrorMessage(capturedText));
+  }
   order = JSON.parse(capturedText) as PaypalOrder;
   const id = completedCaptureId(order);
-  if (id) return id;
+  if (id) {
+    rememberCall({
+      scope,
+      kind: "sale",
+      path: capturePath,
+      statusCode: captured.status,
+      ok: true,
+      amount,
+      captureId: id,
+      summary: "COMPLETED",
+      durationMs: Date.now() - captureStarted,
+    });
+    return id;
+  }
 
   if (order.status === "PAYER_ACTION_REQUIRED") {
     throw new Error(

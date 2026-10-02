@@ -4,6 +4,7 @@ import { ORIGINAL_PRICE_CENTS } from "@/lib/constants";
 import { getDb } from "@/lib/db";
 import { nowIso } from "@/lib/ids";
 import { refundCapturePartial } from "@/lib/paypal/client";
+import { recordPaypalTrace } from "@/lib/paypal/trace";
 import {
   getOrdersForSession,
   getSessionById,
@@ -61,7 +62,7 @@ export async function launchCampaign(sessionId: string): Promise<{
     `UPDATE demo_sessions SET campaign_status = 'refunding', updated_at = ? WHERE id = ?`,
   ).run(ts, sessionId);
 
-  void processRefunds(sessionId, priceCents, session.is_preview === 1);
+  void processRefunds(sessionId, priceCents, session.is_preview === 1, session.batch_id);
 
   return { ok: true };
 }
@@ -70,6 +71,7 @@ async function processRefunds(
   sessionId: string,
   newPriceCents: number,
   isPreview: boolean,
+  batchId: string | null,
 ) {
   const orders = getOrdersForSession(sessionId);
   const db = getDb();
@@ -102,13 +104,29 @@ async function processRefunds(
         amountCents: adjustment,
         idempotencyKey,
         allowSimulate: isPreview,
+        scope: { sessionId, batchId },
       });
     } else if (isPreview) {
       await new Promise((r) => setTimeout(r, 350));
-      result = {
-        ok: true,
-        refundId: `PREVIEW-${order.id.slice(-8)}`,
-      };
+      const refundId = `PREVIEW-${order.id.slice(-8)}`;
+      try {
+        recordPaypalTrace({
+          scope: { sessionId, batchId },
+          kind: "refund",
+          path: "/v2/payments/captures/preview/refund",
+          statusCode: null,
+          ok: true,
+          simulated: true,
+          amount: (adjustment / 100).toFixed(2),
+          captureId: order.paypal_capture_id,
+          refundId,
+          summary: "Preview only. Not sent to PayPal.",
+          durationMs: 350,
+        });
+      } catch {
+        /* The scanner must not stop a preview refund. */
+      }
+      result = { ok: true, refundId };
     } else {
       result = { ok: false, error: "No PayPal capture linked" };
     }
@@ -171,6 +189,7 @@ export async function retryOrderRefund(
     amountCents: adjustment,
     idempotencyKey: `payzap-retry-${orderId}`,
     allowSimulate: session.is_preview === 1,
+    scope: { sessionId, batchId: session.batch_id },
   });
 
   if (result.ok) {
