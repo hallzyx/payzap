@@ -19,6 +19,17 @@ export default function PayZapPage() {
   const canAnalyze =
     session.campaignStatus === "idle" || session.campaignStatus === "analyzed";
   const showRisk = analysis && session.proposedPriceCents != null;
+  const campaignLive =
+    session.campaignStatus === "approved" ||
+    session.campaignStatus === "refunding" ||
+    session.campaignStatus === "completed" ||
+    session.campaignStatus === "partial_failure";
+  const exposureCents = campaignLive
+    ? metrics.totalRefundedCents
+    : showRisk && analysis
+      ? analysis.totalExposureCents
+      : 0;
+  const exposureLabel = campaignLive ? "Refunded" : "Current refund exposure";
   const refunding = session.campaignStatus === "refunding";
   const done =
     session.campaignStatus === "completed" ||
@@ -101,7 +112,7 @@ export default function PayZapPage() {
       {session.isPreview && !session.batchId && (
         <div className="mt-6 rounded-lg border border-amber-600/40 bg-amber-950/30 p-4 text-sm text-amber-200">
           Live PayPal Sandbox capacity is temporarily unavailable. Refunds will
-          run in clearly labeled preview simulation until capture batches are seeded.
+          run in clearly labeled preview simulation.
         </div>
       )}
 
@@ -117,12 +128,8 @@ export default function PayZapPage() {
           <p className="metric-hero">{metrics.protectedPurchases}</p>
         </div>
         <div className="card-merchant p-4">
-          <p className="text-xs text-[var(--merchant-muted)]">Current refund exposure</p>
-          <p className="metric-hero">
-            {showRisk && analysis
-              ? formatUsd(analysis.totalExposureCents)
-              : formatUsd(0)}
-          </p>
+          <p className="text-xs text-[var(--merchant-muted)]">{exposureLabel}</p>
+          <p className="metric-hero">{formatUsd(exposureCents)}</p>
         </div>
         <div className="card-merchant p-4">
           <p className="text-xs text-[var(--merchant-muted)]">Product · current price</p>
