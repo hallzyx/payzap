@@ -103,6 +103,9 @@ export interface DemoState {
     expiresAt: string;
     remainingMs: number;
     expired: boolean;
+    hasLivePaypalRefunds: boolean;
+    readyBatchCount: number;
+    batchConsumed: boolean;
   };
   product: {
     name: string;

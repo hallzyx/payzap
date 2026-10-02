@@ -9,7 +9,7 @@ import {
   SESSION_DURATION_MS,
   STORE_NAME,
 } from "@/lib/constants";
-import { getDb } from "@/lib/db";
+import { getDb, topUpReadyBatches } from "@/lib/db";
 import { newId, nowIso, shortId } from "@/lib/ids";
 import type {
   BatchRow,
@@ -20,6 +20,22 @@ import type {
 } from "@/lib/types";
 import { computeExposure } from "@/lib/campaign/exposure";
 import { evaluateEligibility } from "@/lib/campaign/eligibility";
+
+export function isLivePaypalRefund(order: OrderRow): boolean {
+  if (order.refund_status !== "completed" || !order.paypal_refund_id) return false;
+  if (
+    order.paypal_refund_id.startsWith("SIM-") ||
+    order.paypal_refund_id.startsWith("PREVIEW-")
+  ) {
+    return false;
+  }
+  if (order.paypal_capture_id?.startsWith("SANDBOX-CAP-")) return false;
+  return true;
+}
+
+function capturesAreSynthetic(captureIds: string[]): boolean {
+  return captureIds.length === 0 || captureIds.every((id) => id.startsWith("SANDBOX-CAP-"));
+}
 
 function mapOrder(row: OrderRow): OrderView {
   let eligibility = null;
@@ -56,9 +72,14 @@ function mapOrder(row: OrderRow): OrderView {
 
 function reserveBatch(sessionId: string): BatchRow | null {
   const db = getDb();
+  topUpReadyBatches(db);
   const batch = db
     .prepare(
-      `SELECT * FROM paypal_batches WHERE status = 'Ready' ORDER BY created_at ASC LIMIT 1`,
+      `SELECT * FROM paypal_batches
+       WHERE status = 'Ready'
+       ORDER BY CASE WHEN capture_ids_json LIKE '%SANDBOX-CAP-%' THEN 1 ELSE 0 END,
+                created_at ASC
+       LIMIT 1`,
     )
     .get() as BatchRow | undefined;
 
@@ -81,11 +102,11 @@ export function createDemoSession(): SessionRow {
   const expiresAt = new Date(Date.now() + SESSION_DURATION_MS).toISOString();
 
   const batch = reserveBatch(sessionId);
-  const isPreview = batch ? 0 : 1;
   let captureIds: string[] = [];
   if (batch) {
     captureIds = JSON.parse(batch.capture_ids_json) as string[];
   }
+  const isPreview = !batch || capturesAreSynthetic(captureIds) ? 1 : 0;
 
   db.prepare(
     `INSERT INTO demo_sessions (
@@ -216,11 +237,28 @@ export function buildDemoState(session: SessionRow): DemoState {
   }
 
   let currentExposure = 0;
-  if (session.campaign_status === "idle" || session.campaign_status === "analyzed") {
+  if (
+    session.campaign_status === "idle" ||
+    session.campaign_status === "analyzed" ||
+    session.campaign_status === "accepted"
+  ) {
     currentExposure = 0;
   } else {
     currentExposure = totalRefundedCents || 0;
   }
+
+  const db = getDb();
+  const readyRow = db
+    .prepare(`SELECT COUNT(*) as c FROM paypal_batches WHERE status = 'Ready'`)
+    .get() as { c: number };
+  let batchConsumed = false;
+  if (session.batch_id) {
+    const batch = db
+      .prepare(`SELECT status FROM paypal_batches WHERE id = ?`)
+      .get(session.batch_id) as { status: string } | undefined;
+    batchConsumed = batch?.status === "Consumed";
+  }
+  const orderRows = getOrdersForSession(session.id);
 
   return {
     session: {
@@ -241,6 +279,9 @@ export function buildDemoState(session: SessionRow): DemoState {
       expiresAt: session.expires_at,
       remainingMs: Math.max(0, remainingMs),
       expired,
+      hasLivePaypalRefunds: orderRows.some(isLivePaypalRefund),
+      readyBatchCount: readyRow.c,
+      batchConsumed,
     },
     product: {
       name: PRODUCT_NAME,
@@ -292,15 +333,30 @@ export function saveAnalysis(
   );
 }
 
-export function resetScenario(sessionId: string) {
+export function resetScenario(sessionId: string): {
+  ok: boolean;
+  error?: string;
+  paypalHistoryPreserved: boolean;
+} {
   const db = getDb();
   const session = getSessionById(sessionId);
-  if (!session) return;
+  if (!session) {
+    return { ok: false, error: "Session not found", paypalHistoryPreserved: false };
+  }
+  if (new Date(session.expires_at).getTime() <= Date.now()) {
+    return { ok: false, error: "Session expired", paypalHistoryPreserved: false };
+  }
+
+  const live = getOrdersForSession(sessionId).some(isLivePaypalRefund);
+  if (live) {
+    return { ok: true, paypalHistoryPreserved: true };
+  }
 
   const ts = nowIso();
   db.prepare(
     `UPDATE demo_sessions SET
       product_price_cents = ?,
+      stock = ?,
       campaign_status = 'idle',
       proposed_price_cents = NULL,
       refund_budget_cents = NULL,
@@ -309,17 +365,87 @@ export function resetScenario(sessionId: string) {
       buyer_notified = 0,
       updated_at = ?
     WHERE id = ?`,
-  ).run(ORIGINAL_PRICE_CENTS, ts, sessionId);
+  ).run(ORIGINAL_PRICE_CENTS, INITIAL_STOCK, ts, sessionId);
 
   db.prepare(
     `UPDATE demo_orders SET
       price_adjustment_cents = 0,
       effective_price_cents = purchase_price_cents,
-      refund_status = CASE WHEN refund_status = 'completed' THEN 'completed' ELSE 'queued' END,
+      paypal_refund_id = NULL,
+      refund_status = 'queued',
       refund_error = NULL,
       eligibility_json = NULL
     WHERE session_id = ?`,
   ).run(sessionId);
+
+  return { ok: true, paypalHistoryPreserved: false };
+}
+
+export function startFreshLiveRun(sessionId: string): {
+  ok: boolean;
+  error?: string;
+  preview: boolean;
+} {
+  const db = getDb();
+  const session = getSessionById(sessionId);
+  if (!session) return { ok: false, error: "Session not found", preview: true };
+  if (new Date(session.expires_at).getTime() <= Date.now()) {
+    return { ok: false, error: "Session expired", preview: session.is_preview === 1 };
+  }
+
+  const ts = nowIso();
+  if (session.batch_id) {
+    db.prepare(
+      `UPDATE paypal_batches SET status = 'Consumed', updated_at = ? WHERE id = ?`,
+    ).run(ts, session.batch_id);
+  }
+
+  const batch = reserveBatch(sessionId);
+  const captureIds: string[] = batch
+    ? (JSON.parse(batch.capture_ids_json) as string[])
+    : [];
+  const preview = !batch || capturesAreSynthetic(captureIds);
+
+  db.prepare(
+    `UPDATE demo_sessions SET
+      product_price_cents = ?,
+      stock = ?,
+      campaign_status = 'idle',
+      proposed_price_cents = NULL,
+      refund_budget_cents = NULL,
+      recommended_price_cents = NULL,
+      analyzed_prompt = NULL,
+      batch_id = ?,
+      is_preview = ?,
+      buyer_notified = 0,
+      updated_at = ?
+    WHERE id = ?`,
+  ).run(
+    ORIGINAL_PRICE_CENTS,
+    INITIAL_STOCK,
+    batch?.id ?? null,
+    preview ? 1 : 0,
+    ts,
+    sessionId,
+  );
+
+  const orders = getOrdersForSession(sessionId);
+  const updateOrder = db.prepare(
+    `UPDATE demo_orders SET
+      price_adjustment_cents = 0,
+      effective_price_cents = purchase_price_cents,
+      paypal_capture_id = ?,
+      paypal_refund_id = NULL,
+      refund_status = 'queued',
+      refund_error = NULL,
+      eligibility_json = NULL
+    WHERE id = ?`,
+  );
+  orders.forEach((order, index) => {
+    updateOrder.run(captureIds[index] ?? null, order.id);
+  });
+
+  return { ok: true, preview };
 }
 
 export { evaluateEligibility, STORE_NAME };

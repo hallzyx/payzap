@@ -75,21 +75,26 @@ function migrate(database: Database.Database) {
     CREATE INDEX IF NOT EXISTS idx_batches_status ON paypal_batches(status);
   `);
 
-  const row = database.prepare(`SELECT COUNT(*) as c FROM paypal_batches`).get() as {
-    c: number;
-  };
-  if (row.c === 0) {
+  topUpReadyBatches(database);
+}
+
+export function topUpReadyBatches(database: Database.Database) {
+  const ready = database
+    .prepare(`SELECT COUNT(*) as c FROM paypal_batches WHERE status = 'Ready'`)
+    .get() as { c: number };
+  const insert = database.prepare(
+    `INSERT INTO paypal_batches (id, status, capture_ids_json, reserved_session_id, created_at, updated_at)
+     VALUES (?, 'Ready', ?, NULL, ?, ?)`,
+  );
+  const targetReady = 3;
+  for (let n = ready.c; n < targetReady; n++) {
+    const stamp = `${Date.now()}_${n}_${Math.random().toString(16).slice(2, 8)}`;
     const captures = Array.from(
       { length: 10 },
-      (_, i) => `SANDBOX-CAP-SEED-${i}`,
+      (_, i) => `SANDBOX-CAP-SEED-${stamp}-${i}`,
     );
     const ts = new Date().toISOString();
-    database
-      .prepare(
-        `INSERT INTO paypal_batches (id, status, capture_ids_json, reserved_session_id, created_at, updated_at)
-         VALUES (?, 'Ready', ?, NULL, ?, ?)`,
-      )
-      .run(`batch_seed_${Date.now()}`, JSON.stringify(captures), ts, ts);
+    insert.run(`batch_seed_${stamp}`, JSON.stringify(captures), ts, ts);
   }
 }
 

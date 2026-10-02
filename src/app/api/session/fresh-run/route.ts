@@ -2,7 +2,7 @@ import { NextResponse } from "next/server";
 import {
   buildDemoState,
   getSessionById,
-  resetScenario,
+  startFreshLiveRun,
 } from "@/lib/session/repository";
 import { getSessionIdFromCookies } from "@/lib/session/cookies";
 
@@ -11,7 +11,7 @@ export async function POST() {
   if (!sessionId) {
     return NextResponse.json({ error: "No session" }, { status: 401 });
   }
-  const result = resetScenario(sessionId);
+  const result = startFreshLiveRun(sessionId);
   if (!result.ok) {
     const status = result.error === "Session expired" ? 410 : 400;
     return NextResponse.json({ error: result.error }, { status });
@@ -19,6 +19,6 @@ export async function POST() {
   const session = getSessionById(sessionId);
   return NextResponse.json({
     state: session ? buildDemoState(session) : null,
-    paypalHistoryPreserved: result.paypalHistoryPreserved,
+    preview: result.preview,
   });
 }
