@@ -1,5 +1,6 @@
 import { NextResponse } from "next/server";
 import { computeExposure } from "@/lib/campaign/exposure";
+import { reviewCampaignPrompt, takeAnalysisTurn } from "@/lib/campaign/guard";
 import { extractCampaignIntent } from "@/lib/campaign/intent";
 import {
   buildDemoState,
@@ -7,7 +8,6 @@ import {
   saveAnalysis,
 } from "@/lib/session/repository";
 import { getSessionIdFromCookies } from "@/lib/session/cookies";
-import { DEFAULT_PROMO_PROMPT } from "@/lib/constants";
 
 export async function POST(req: Request) {
   const sessionId = await getSessionIdFromCookies();
@@ -28,8 +28,50 @@ export async function POST(req: Request) {
     );
   }
 
-  const body = (await req.json()) as { prompt?: string };
-  const prompt = body.prompt?.trim() || DEFAULT_PROMO_PROMPT;
+  const contentLength = Number(req.headers.get("content-length") ?? 0);
+  if (contentLength > 2_000) {
+    return NextResponse.json(
+      { error: "Keep the campaign to one short sentence with a price and a refund budget." },
+      { status: 400 },
+    );
+  }
+
+  let body: { prompt?: unknown };
+  try {
+    body = (await req.json()) as { prompt?: unknown };
+  } catch {
+    return NextResponse.json(
+      { error: "PayZap only reads a sale price and a refund budget." },
+      { status: 400 },
+    );
+  }
+  if (body.prompt != null && typeof body.prompt !== "string") {
+    return NextResponse.json(
+      { error: "PayZap only reads a sale price and a refund budget." },
+      { status: 400 },
+    );
+  }
+
+  const reviewed = reviewCampaignPrompt(
+    typeof body.prompt === "string" ? body.prompt : undefined,
+  );
+  if (!reviewed.ok) {
+    return NextResponse.json({ error: reviewed.error }, { status: 400 });
+  }
+  const prompt = reviewed.prompt;
+
+  if (
+    session.campaign_status === "analyzed" &&
+    session.analyzed_prompt === prompt
+  ) {
+    return NextResponse.json({ state: buildDemoState(session) });
+  }
+
+  const turn = takeAnalysisTurn(sessionId);
+  if (!turn.ok) {
+    return NextResponse.json({ error: turn.error }, { status: 429 });
+  }
+
   const intent = await extractCampaignIntent(prompt);
   if (!intent) {
     return NextResponse.json(
