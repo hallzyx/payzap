@@ -30,7 +30,7 @@ export default function BuyerOrdersPage() {
   return (
     <main className="mx-auto max-w-5xl px-4 py-10">
       <p className="text-xs uppercase tracking-[0.18em] text-[var(--muted)]">Your account</p>
-      <h1 className="mt-2 text-4xl" style={{ fontFamily: "var(--font-fraunces)" }}>
+      <h1 className="font-display mt-2 text-4xl">
         Orders
       </h1>
 
@@ -45,13 +45,26 @@ export default function BuyerOrdersPage() {
               <p className="text-lg font-medium">{demoOrder.productName}</p>
               <p className="mt-1 text-sm text-[var(--muted)]">{PRODUCT_TAGLINE}</p>
             </div>
-            <p className="text-lg tabular-nums">{formatUsd(demoOrder.effectivePriceCents)}</p>
+            <p className="text-right text-lg tabular-nums">
+              {refunded && (
+                <span className="block text-xs text-[var(--muted)] line-through">
+                  {formatUsd(demoOrder.purchasePriceCents)}
+                </span>
+              )}
+              {formatUsd(demoOrder.effectivePriceCents)}
+            </p>
           </div>
           <p className="mt-4 text-sm text-[var(--ink-soft)]">
             {demoOrder.orderNumber} · Delivered · Paid with PayPal
           </p>
-          <p className="mt-3 inline-block rounded-full bg-amber-100 px-3 py-1 text-xs text-amber-950">
-            {refunded ? "Price protection applied" : "Price protection active"}
+          <p
+            className={`mt-3 inline-block rounded-full px-3 py-1 text-xs ${
+              refunded ? "bg-emerald-100 text-emerald-900" : "bg-amber-100 text-amber-950"
+            }`}
+          >
+            {refunded
+              ? `Price protection applied · ${formatUsd(demoOrder.priceAdjustmentCents)} back`
+              : "Price protection active"}
           </p>
         </div>
       </Link>
@@ -60,11 +73,20 @@ export default function BuyerOrdersPage() {
         <ProductVisual className="min-h-48" />
         <div className="p-6">
           <p className="text-xs uppercase tracking-[0.16em] text-[var(--muted)]">In the shop now</p>
-          <h2 className="mt-2 text-2xl" style={{ fontFamily: "var(--font-fraunces)" }}>
+          <h2 className="font-display mt-2 text-2xl">
             {state.product.name}
           </h2>
           <p className="mt-1 text-sm text-[var(--ink-soft)]">{PRODUCT_TAGLINE}</p>
-          <p className="mt-4 text-3xl tabular-nums">{formatUsd(state.product.priceCents)}</p>
+          <p className="mt-4 flex items-baseline gap-3 text-3xl tabular-nums">
+            <span key={state.product.priceCents} className="animate-fade-up">
+              {formatUsd(state.product.priceCents)}
+            </span>
+            {state.product.priceCents < demoOrder.purchasePriceCents && (
+              <span className="rounded-full bg-[var(--accent-live)] px-2.5 py-0.5 text-xs font-medium text-white">
+                Price dropped
+              </span>
+            )}
+          </p>
           <p className="mt-2 text-sm text-[var(--muted)]">
             {state.product.stock} in stock · ships from Aster
           </p>
