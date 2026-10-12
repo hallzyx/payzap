@@ -37,10 +37,27 @@ export function DemoProvider({ children }: { children: React.ReactNode }) {
   }, []);
 
   useEffect(() => {
-    refresh().finally(() => setLoading(false));
-    const id = setInterval(refresh, 2000);
-    return () => clearInterval(id);
-  }, [refresh]);
+    let cancelled = false;
+
+    async function poll() {
+      try {
+        const res = await fetch("/api/session");
+        const data = (await res.json()) as { state?: DemoState };
+        if (!cancelled) setState(data.state ?? null);
+      } catch {
+        /* Keep the last snapshot if a poll misses. */
+      }
+    }
+
+    void poll().finally(() => {
+      if (!cancelled) setLoading(false);
+    });
+    const id = setInterval(() => void poll(), 2000);
+    return () => {
+      cancelled = true;
+      clearInterval(id);
+    };
+  }, []);
 
   const generateDemo = useCallback(async () => {
     setLoading(true);

@@ -10,10 +10,6 @@ export function extractCampaignIntentDeterministic(
   const text = prompt.trim();
   if (!text) return null;
 
-  const priceMatch =
-    text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/gi) ??
-    text.match(/(?:at|to|price)\s+\$?\s*([\d,]+)/gi);
-
   const numbers: number[] = [];
   const dollarMatches = text.match(/\$\s*([\d,]+(?:\.\d{1,2})?)/g) ?? [];
   for (const m of dollarMatches) {

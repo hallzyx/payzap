@@ -43,6 +43,12 @@ export function SandboxScanner() {
   const scroller = useRef<HTMLDivElement>(null);
   const stick = useRef(false);
   const opened = useRef(false);
+  const [now, setNow] = useState(() => Date.now());
+
+  useEffect(() => {
+    const id = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(id);
+  }, []);
 
   useEffect(() => {
     let cancelled = false;
@@ -97,7 +103,9 @@ export function SandboxScanner() {
   const calls = activity?.calls ?? [];
   const sales = calls.filter((call) => call.kind === "sale" && call.ok).length;
   const refunds = calls.filter((call) => call.kind === "refund" && call.ok).length;
-  const live = activity?.inflight || calls.some((call) => Date.now() - new Date(call.createdAt).getTime() < 4000);
+  const live =
+    activity?.inflight ||
+    calls.some((call) => now - new Date(call.createdAt).getTime() < 4000);
 
   return (
     <div className="pointer-events-none fixed bottom-4 right-4 z-[80] flex flex-col items-end gap-2">
