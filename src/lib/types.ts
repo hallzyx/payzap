@@ -4,6 +4,7 @@ import type {
   RefundStatus,
   Role,
 } from "./constants";
+import type { Policy } from "./policy/schema";
 
 export interface SessionRow {
   id: string;
@@ -17,6 +18,8 @@ export interface SessionRow {
   refund_budget_cents: number | null;
   recommended_price_cents: number | null;
   analyzed_prompt: string | null;
+  policy_text: string | null;
+  policy_json: string | null;
   batch_id: string | null;
   is_preview: number;
   buyer_notified: number;
@@ -47,6 +50,9 @@ export interface OrderRow {
   refund_status: RefundStatus;
   refund_error: string | null;
   eligibility_json: string | null;
+  coupon_code: string | null;
+  item_condition: "new" | "open_box";
+  buyer_note: string | null;
   created_at: string;
 }
 
@@ -66,10 +72,17 @@ export interface CampaignIntent {
   source: "openai" | "deepseek" | "deterministic";
 }
 
+export interface ExcludedOrder {
+  orderNumber: string;
+  /** Plain-language reasons, each tied to a policy rule when one applies. */
+  reasons: string[];
+}
+
 export interface ExposureAnalysis {
   proposedPriceCents: number;
   refundBudgetCents: number | null;
   eligibleCount: number;
+  excludedOrders: ExcludedOrder[];
   refundPerOrderCents: number;
   totalExposureCents: number;
   exceedsBudget: boolean;
@@ -81,7 +94,14 @@ export interface ExposureAnalysis {
 
 export interface EligibilityCheck {
   eligible: boolean;
-  checks: Array<{ label: string; passed: boolean }>;
+  checks: Array<{
+    label: string;
+    passed: boolean;
+    /** Policy rule behind this check, when it came from the merchant's policy. */
+    ruleId?: string;
+    /** The merchant's own words that justify the rule. */
+    cite?: string;
+  }>;
 }
 
 export interface DemoState {
@@ -97,6 +117,7 @@ export interface DemoState {
     refundBudgetCents: number | null;
     recommendedPriceCents: number | null;
     analyzedPrompt: string | null;
+    policyText: string | null;
     batchId: string | null;
     isPreview: boolean;
     buyerNotified: boolean;
@@ -125,9 +146,13 @@ export interface DemoState {
     failedRefunds: number;
   };
   analysis: ExposureAnalysis | null;
+  policy: Policy;
 }
 
 export interface OrderView {
+  couponCode: string | null;
+  itemCondition: "new" | "open_box";
+  buyerNote: string | null;
   id: string;
   orderNumber: string;
   buyerName: string;

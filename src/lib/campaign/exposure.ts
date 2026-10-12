@@ -1,40 +1,114 @@
-import {
-  ORIGINAL_PRICE_CENTS,
-  PROTECTED_ORDER_COUNT,
-} from "@/lib/constants";
-import type { ExposureAnalysis } from "@/lib/types";
+import { ORIGINAL_PRICE_CENTS } from "@/lib/constants";
+import { evaluatePolicyEligibility } from "@/lib/campaign/eligibility";
+import { DEFAULT_POLICY, type Policy } from "@/lib/policy/schema";
+import type { ExcludedOrder, ExposureAnalysis, OrderRow } from "@/lib/types";
+
+const WHOLE_DOLLAR_CENTS = 100;
+
+/** Total refunds if the price drops to priceCents, under the given policy. */
+export function exposureAt(
+  orders: OrderRow[],
+  policy: Policy,
+  priceCents: number,
+  now = new Date(),
+): number {
+  let total = 0;
+  for (const order of orders) {
+    if (evaluatePolicyEligibility(order, priceCents, now, policy).eligible) {
+      total += order.purchase_price_cents - priceCents;
+    }
+  }
+  return total;
+}
+
+/**
+ * Lowest price (in cents) whose total refunds stay within the budget.
+ * Exposure never rises as the price rises, so a binary search is exact.
+ */
+function lowestSafePrice(
+  orders: OrderRow[],
+  policy: Policy,
+  budgetCents: number,
+  ceilingCents: number,
+  now: Date,
+): number {
+  let lo = 0;
+  let hi = ceilingCents;
+  while (lo < hi) {
+    const mid = Math.floor((lo + hi) / 2);
+    if (exposureAt(orders, policy, mid, now) <= budgetCents) hi = mid;
+    else lo = mid + 1;
+  }
+  return lo;
+}
 
 export function computeExposure(params: {
   proposedPriceCents: number;
   refundBudgetCents: number | null;
-  eligibleCount: number;
+  orders: OrderRow[];
+  policy?: Policy;
   originalPriceCents?: number;
+  now?: Date;
 }): ExposureAnalysis {
+  const policy = params.policy ?? DEFAULT_POLICY;
+  const now = params.now ?? new Date();
   const original = params.originalPriceCents ?? ORIGINAL_PRICE_CENTS;
-  const perOrder = Math.max(0, original - params.proposedPriceCents);
-  const totalExposure = perOrder * params.eligibleCount;
+  const proposed = params.proposedPriceCents;
+  const perOrder = Math.max(0, original - proposed);
   const budget = params.refundBudgetCents;
-  const exceedsBudget =
-    budget !== null && budget !== undefined && totalExposure > budget;
+
+  const eligible: OrderRow[] = [];
+  const excludedOrders: ExcludedOrder[] = [];
+  for (const order of params.orders) {
+    const result = evaluatePolicyEligibility(order, proposed, now, policy);
+    if (result.eligible) {
+      eligible.push(order);
+    } else if (perOrder > 0) {
+      excludedOrders.push({
+        orderNumber: order.order_number,
+        reasons: result.checks.filter((c) => !c.passed).map((c) => c.label),
+      });
+    }
+  }
+
+  const totalExposure = exposureAt(params.orders, policy, proposed, now);
+  const exceedsBudget = budget !== null && totalExposure > budget;
   const overByCents = exceedsBudget && budget !== null ? totalExposure - budget : 0;
 
   let recommendedPriceCents: number | null = null;
   let recommendedExposureCents: number | null = null;
   let reason = "No refund budget constraint was provided.";
 
-  if (budget !== null && params.eligibleCount > 0 && perOrder > 0) {
-    const maxPerCustomer = Math.floor(budget / params.eligibleCount);
-    recommendedPriceCents = original - maxPerCustomer;
-    recommendedExposureCents = maxPerCustomer * params.eligibleCount;
-    reason = `Spreading your $${(budget / 100).toLocaleString()} refund budget across ${params.eligibleCount} protected customers allows up to $${(maxPerCustomer / 100).toLocaleString()} per order — a promotional price of $${(recommendedPriceCents / 100).toLocaleString()}.`;
-  } else if (perOrder <= 0) {
-    reason = "The proposed price is not below the current price, so no price-protection liability is created.";
+  if (perOrder <= 0) {
+    reason =
+      "The proposed price is not below the current price, so no price-protection liability is created.";
+  } else if (budget !== null) {
+    if (exceedsBudget) {
+      const lowest = lowestSafePrice(params.orders, policy, budget, original, now);
+      // Round up to a whole dollar: a higher price only lowers the exposure.
+      recommendedPriceCents = Math.min(
+        original,
+        Math.ceil(lowest / WHOLE_DOLLAR_CENTS) * WHOLE_DOLLAR_CENTS,
+      );
+      recommendedExposureCents = exposureAt(
+        params.orders,
+        policy,
+        recommendedPriceCents,
+        now,
+      );
+      reason = `Your policy covers ${eligible.length} of ${params.orders.length} orders. Keeping refunds within $${(budget / 100).toLocaleString()} allows a promotional price of $${(recommendedPriceCents / 100).toLocaleString()}.`;
+    } else {
+      recommendedPriceCents = proposed;
+      recommendedExposureCents = totalExposure;
+      reason = `Your policy covers ${eligible.length} of ${params.orders.length} orders. The proposed price already keeps refunds within $${(budget / 100).toLocaleString()}.`;
+    }
   }
 
   return {
-    proposedPriceCents: params.proposedPriceCents,
+    proposedPriceCents: proposed,
     refundBudgetCents: budget,
-    eligibleCount: params.eligibleCount,
+    eligibleCount: eligible.length,
+    excludedOrders,
     refundPerOrderCents: perOrder,
     totalExposureCents: totalExposure,
     exceedsBudget,
@@ -43,10 +117,4 @@ export function computeExposure(params: {
     recommendedExposureCents,
     reason,
   };
-}
-
-export function countEligibleForExposure(
-  orderCount: number = PROTECTED_ORDER_COUNT,
-): number {
-  return orderCount;
 }

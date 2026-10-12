@@ -1,13 +1,21 @@
 import {
   CAMPAIGN_PROMPT_MAX_CHARS,
   DEFAULT_PROMO_PROMPT,
+  POLICY_TEXT_MAX_CHARS,
+  POLICY_TEXT_MIN_CHARS,
 } from "@/lib/constants";
 
 const MAX_WORDS = 45;
 const MAX_ANALYSES_PER_SESSION = 6;
 const MIN_GAP_MS = 3_000;
 
+const MAX_POLICY_COMPILES_PER_SESSION = 4;
+
 const turns = new Map<string, { count: number; lastAt: number }>();
+const policyTurns = new Map<string, { count: number; lastAt: number }>();
+
+const POLICY_WORD =
+  /\b(protect\w*|guarantee\w*|price|prices|coupon|refund\w*|adjust\w*|days?|open[- ]?box|window|purchase\w*|orders?)\b/i;
 
 const CAMPAIGN_WORD =
   /\b(price|priced|campaign|promotion|promo|refund|refunds|budget|under|drop|sale|discount)\b/i;
@@ -88,5 +96,66 @@ export function takeAnalysisTurn(sessionId: string): PromptReview {
   }
 
   turns.set(sessionId, { count: current.count + 1, lastAt: now });
+  return { ok: true, prompt: "" };
+}
+
+/** Accepts only a short paragraph that reads like a price-protection policy. */
+export function reviewPolicyText(raw: unknown): PromptReview {
+  if (typeof raw !== "string") {
+    return { ok: false, error: "Paste your price-protection policy as text." };
+  }
+  if (raw.length > POLICY_TEXT_MAX_CHARS * 2) {
+    return {
+      ok: false,
+      error: `Keep the policy under ${POLICY_TEXT_MAX_CHARS} characters.`,
+    };
+  }
+  const text = normalize(raw);
+  if (text.length < POLICY_TEXT_MIN_CHARS) {
+    return {
+      ok: false,
+      error: "Paste a few sentences of your price-protection terms.",
+    };
+  }
+  if (text.length > POLICY_TEXT_MAX_CHARS) {
+    return {
+      ok: false,
+      error: `Keep the policy under ${POLICY_TEXT_MAX_CHARS} characters.`,
+    };
+  }
+  if (JAILBREAK.test(text)) {
+    return {
+      ok: false,
+      error: "PayZap only reads price-protection terms.",
+    };
+  }
+  if (!POLICY_WORD.test(text)) {
+    return {
+      ok: false,
+      error: "That does not look like price-protection terms. PayZap does not answer other requests.",
+    };
+  }
+  return { ok: true, prompt: text };
+}
+
+/** Limits how often one demo session can spend a model call compiling a policy. */
+export function takePolicyTurn(sessionId: string): PromptReview {
+  const now = Date.now();
+  const current = policyTurns.get(sessionId) ?? { count: 0, lastAt: 0 };
+
+  if (now - current.lastAt < MIN_GAP_MS) {
+    return {
+      ok: false,
+      error: "PayZap is still reading your last policy. Wait a moment, then try again.",
+    };
+  }
+  if (current.count >= MAX_POLICY_COMPILES_PER_SESSION) {
+    return {
+      ok: false,
+      error: "This demo can read a few policies. Reset the scenario to start over.",
+    };
+  }
+
+  policyTurns.set(sessionId, { count: current.count + 1, lastAt: now });
   return { ok: true, prompt: "" };
 }

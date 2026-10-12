@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint",
     "typecheck": "next typegen && tsc --noEmit",
+    "check:policy": "tsx scripts/check-policy.ts",
     "seed:paypal": "tsx scripts/seed-paypal-batches.ts",
     "seed:demo-batches": "tsx scripts/seed-demo-batches.ts"
   },

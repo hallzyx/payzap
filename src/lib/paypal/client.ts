@@ -37,6 +37,8 @@ export async function refundCapturePartial(params: {
   amountCents: number;
   currency?: string;
   idempotencyKey: string;
+  /** Sent as the refund's custom_id so it can be traced to the policy that approved it. */
+  customId?: string;
   allowSimulate?: boolean;
   scope?: PaypalCallScope;
 }): Promise<RefundResult> {
@@ -79,6 +81,8 @@ export async function refundCapturePartial(params: {
     body: JSON.stringify({
       amount: { value: amount, currency_code: currency },
       note_to_payer: "PayZap price protection adjustment",
+      // PayPal caps custom_id at 127 characters.
+      ...(params.customId ? { custom_id: params.customId.slice(0, 127) } : {}),
     }),
   });
 

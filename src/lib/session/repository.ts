@@ -1,6 +1,7 @@
 import {
   BUYER_FIRST_NAMES,
   INITIAL_STOCK,
+  ORDER_TRAITS,
   ORIGINAL_PRICE_CENTS,
   PRODUCT_NAME,
   PRODUCT_SKU,
@@ -18,8 +19,9 @@ import type {
   OrderView,
   SessionRow,
 } from "@/lib/types";
-import { computeExposure } from "@/lib/campaign/exposure";
+import { computeExposure, exposureAt } from "@/lib/campaign/exposure";
 import { evaluateEligibility } from "@/lib/campaign/eligibility";
+import { parsePolicyJson, type Policy } from "@/lib/policy/schema";
 
 export function isLivePaypalRefund(order: OrderRow): boolean {
   if (order.refund_status !== "completed" || !order.paypal_refund_id) return false;
@@ -67,7 +69,42 @@ function mapOrder(row: OrderRow): OrderView {
     refundStatus: row.refund_status,
     refundError: row.refund_error,
     eligibility,
+    couponCode: row.coupon_code,
+    itemCondition: row.item_condition,
+    buyerNote: row.buyer_note,
   };
+}
+
+export function getPolicyForSession(session: SessionRow): Policy {
+  return parsePolicyJson(session.policy_json);
+}
+
+export function savePolicy(
+  sessionId: string,
+  policy: Policy,
+  text: string | null,
+) {
+  getDb()
+    .prepare(
+      `UPDATE demo_sessions SET policy_text = ?, policy_json = ?, updated_at = ? WHERE id = ?`,
+    )
+    .run(text, JSON.stringify(policy), nowIso(), sessionId);
+}
+
+/** The policy changes who is eligible, so a saved analysis no longer applies. */
+export function clearAnalysis(sessionId: string) {
+  getDb()
+    .prepare(
+      `UPDATE demo_sessions SET
+        campaign_status = 'idle',
+        proposed_price_cents = NULL,
+        refund_budget_cents = NULL,
+        recommended_price_cents = NULL,
+        analyzed_prompt = NULL,
+        updated_at = ?
+      WHERE id = ? AND campaign_status IN ('analyzed', 'accepted')`,
+    )
+    .run(nowIso(), sessionId);
 }
 
 function reserveBatch(sessionId: string): BatchRow | null {
@@ -133,14 +170,16 @@ export function createDemoSession(): SessionRow {
       product_sku, product_name, purchase_price_cents, price_adjustment_cents,
       effective_price_cents, payment_provider, payment_status, order_status,
       protection_status, purchased_at, protection_expires_at,
-      paypal_capture_id, refund_status, created_at
+      paypal_capture_id, refund_status, created_at,
+      coupon_code, item_condition, buyer_note
     ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0, ?, 'PayPal', 'Completed', 'Delivered',
-      'Active', ?, ?, ?, 'queued', ?)`,
+      'Active', ?, ?, ?, 'queued', ?, ?, ?, ?)`,
   );
 
   for (let i = 0; i < PROTECTED_ORDER_COUNT; i++) {
     const orderId = newId("ord");
-    const daysAgo = (i % 5) + 1;
+    const traits = ORDER_TRAITS[i] ?? { daysAgo: (i % 5) + 1 };
+    const daysAgo = traits.daysAgo;
     const purchasedAt = new Date(
       Date.now() - daysAgo * 24 * 60 * 60 * 1000,
     ).toISOString();
@@ -167,6 +206,9 @@ export function createDemoSession(): SessionRow {
       protectionExpires,
       captureId,
       created,
+      traits.couponCode ?? null,
+      traits.itemCondition ?? "new",
+      traits.buyerNote ?? null,
     );
   }
 
@@ -216,22 +258,26 @@ export function buildDemoState(session: SessionRow): DemoState {
   ).length;
   const failedRefunds = orders.filter((o) => o.refundStatus === "failed").length;
 
+  const orderRows = getOrdersForSession(session.id);
+  const policy = getPolicyForSession(session);
+
   let analysis = null;
   if (session.proposed_price_cents != null) {
     analysis = computeExposure({
       proposedPriceCents: session.proposed_price_cents,
       refundBudgetCents: session.refund_budget_cents,
-      eligibleCount: orders.filter((o) => o.protectionStatus === "Active").length,
+      orders: orderRows,
+      policy,
     });
     if (session.recommended_price_cents != null) {
       analysis = {
         ...analysis,
         recommendedPriceCents: session.recommended_price_cents,
-        recommendedExposureCents: computeExposure({
-          proposedPriceCents: session.recommended_price_cents,
-          refundBudgetCents: session.refund_budget_cents,
-          eligibleCount: orders.length,
-        }).totalExposureCents,
+        recommendedExposureCents: exposureAt(
+          orderRows,
+          policy,
+          session.recommended_price_cents,
+        ),
       };
     }
   }
@@ -258,7 +304,6 @@ export function buildDemoState(session: SessionRow): DemoState {
       .get(session.batch_id) as { status: string } | undefined;
     batchConsumed = batch?.status === "Consumed";
   }
-  const orderRows = getOrdersForSession(session.id);
 
   return {
     session: {
@@ -273,6 +318,7 @@ export function buildDemoState(session: SessionRow): DemoState {
       refundBudgetCents: session.refund_budget_cents,
       recommendedPriceCents: session.recommended_price_cents,
       analyzedPrompt: session.analyzed_prompt,
+      policyText: session.policy_text,
       batchId: session.batch_id,
       isPreview: session.is_preview === 1,
       buyerNotified: session.buyer_notified === 1,
@@ -301,6 +347,7 @@ export function buildDemoState(session: SessionRow): DemoState {
       failedRefunds,
     },
     analysis,
+    policy,
   };
 }
 
@@ -362,6 +409,8 @@ export function resetScenario(sessionId: string): {
       refund_budget_cents = NULL,
       recommended_price_cents = NULL,
       analyzed_prompt = NULL,
+      policy_text = NULL,
+      policy_json = NULL,
       buyer_notified = 0,
       updated_at = ?
     WHERE id = ?`,
@@ -415,6 +464,8 @@ export function startFreshLiveRun(sessionId: string): {
       refund_budget_cents = NULL,
       recommended_price_cents = NULL,
       analyzed_prompt = NULL,
+      policy_text = NULL,
+      policy_json = NULL,
       batch_id = ?,
       is_preview = ?,
       buyer_notified = 0,

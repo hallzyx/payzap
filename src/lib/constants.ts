@@ -17,6 +17,39 @@ export const DEFAULT_PROMO_PROMPT =
 /** The campaign box only accepts a short price-and-budget sentence. */
 export const CAMPAIGN_PROMPT_MAX_CHARS = 280;
 
+/** The policy box takes a short paragraph of the merchant's own guarantee terms. */
+export const POLICY_TEXT_MAX_CHARS = 1_200;
+export const POLICY_TEXT_MIN_CHARS = 20;
+
+export const EXAMPLE_POLICY_CLEAR =
+  "Price protection lasts 7 days after purchase, or 14 days for open-box items. Orders paid with an employee coupon don't qualify.";
+
+export const EXAMPLE_POLICY_VAGUE =
+  "We protect recent purchases against price drops. Open-box items are covered too. Orders bought with a coupon don't qualify.";
+
+/**
+ * Seeded order traits. Index 0 is the demo buyer and stays plain, so the
+ * buyer story is the same under any policy. Everything else exists so a
+ * written policy visibly changes who gets refunded.
+ */
+export const ORDER_TRAITS: Array<{
+  couponCode?: string;
+  itemCondition?: "new" | "open_box";
+  buyerNote?: string;
+  daysAgo: number;
+}> = [
+  { daysAgo: 1 },
+  { daysAgo: 2 },
+  { daysAgo: 3, couponCode: "TEAM20" },
+  { daysAgo: 4 },
+  { daysAgo: 5, itemCondition: "open_box" },
+  { daysAgo: 6 },
+  { daysAgo: 1 },
+  { daysAgo: 2, couponCode: "TEAM20" },
+  { daysAgo: 3, buyerNote: "Gift: my sister paid and shipped it to me." },
+  { daysAgo: 4, itemCondition: "open_box" },
+];
+
 export const BUYER_FIRST_NAMES = [
   "Jordan",
   "Casey",

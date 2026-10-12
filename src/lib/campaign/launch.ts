@@ -5,11 +5,18 @@ import { getDb } from "@/lib/db";
 import { nowIso } from "@/lib/ids";
 import { refundCapturePartial } from "@/lib/paypal/client";
 import { recordPaypalTrace } from "@/lib/paypal/trace";
+import { policyHash, type Policy } from "@/lib/policy/schema";
 import {
   getOrdersForSession,
+  getPolicyForSession,
   getSessionById,
 } from "@/lib/session/repository";
 import type { SessionRow } from "@/lib/types";
+
+/** Ties a PayPal refund back to the policy version that authorized it. */
+function refundCustomId(policy: Policy, sessionId: string): string {
+  return `payzap:p-${policyHash(policy)}:${sessionId.slice(-8)}`;
+}
 
 export async function launchCampaign(sessionId: string): Promise<{
   ok: boolean;
@@ -36,6 +43,7 @@ export async function launchCampaign(sessionId: string): Promise<{
   }
 
   const priceCents = session.recommended_price_cents;
+  const policy = getPolicyForSession(session);
   const db = getDb();
   const ts = nowIso();
 
@@ -53,7 +61,7 @@ export async function launchCampaign(sessionId: string): Promise<{
 
   const orders = getOrdersForSession(sessionId);
   for (const order of orders) {
-    const eligibility = evaluateEligibility(order, priceCents);
+    const eligibility = evaluateEligibility(order, priceCents, new Date(), policy);
     db.prepare(`UPDATE demo_orders SET eligibility_json = ? WHERE id = ?`).run(
       JSON.stringify(eligibility),
       order.id,
@@ -76,7 +84,7 @@ export async function launchCampaign(sessionId: string): Promise<{
   const batchId = session.batch_id;
   after(async () => {
     try {
-      await processRefunds(sessionId, priceCents, isPreview, batchId);
+      await processRefunds(sessionId, priceCents, isPreview, batchId, policy);
     } catch (error) {
       markRefundsInterrupted(sessionId, error);
     }
@@ -103,13 +111,14 @@ async function processRefunds(
   newPriceCents: number,
   isPreview: boolean,
   batchId: string | null,
+  policy: Policy,
 ) {
   const orders = getOrdersForSession(sessionId);
   const db = getDb();
   let failures = 0;
 
   for (const order of orders) {
-    const eligibility = evaluateEligibility(order, newPriceCents);
+    const eligibility = evaluateEligibility(order, newPriceCents, new Date(), policy);
     if (!eligibility.eligible) {
       db.prepare(
         `UPDATE demo_orders SET refund_status = 'skipped', eligibility_json = ? WHERE id = ?`,
@@ -134,6 +143,7 @@ async function processRefunds(
         captureId: order.paypal_capture_id,
         amountCents: adjustment,
         idempotencyKey,
+        customId: refundCustomId(policy, sessionId),
         allowSimulate: isPreview,
         scope: { sessionId, batchId },
       });
@@ -219,7 +229,8 @@ export async function retryOrderRefund(
   }
 
   const price = session.product_price_cents;
-  const eligibility = evaluateEligibility(order, price);
+  const policy = getPolicyForSession(session);
+  const eligibility = evaluateEligibility(order, price, new Date(), policy);
   if (!eligibility.eligible) {
     return { ok: false, error: "Order is not eligible for a price adjustment" };
   }
@@ -238,6 +249,7 @@ export async function retryOrderRefund(
     captureId: order.paypal_capture_id,
     amountCents: adjustment,
     idempotencyKey: `payzap-${sessionId}-${orderId}`,
+    customId: refundCustomId(policy, sessionId),
     allowSimulate: session.is_preview === 1,
     scope: { sessionId, batchId: session.batch_id },
   });
@@ -283,7 +295,8 @@ export function acceptRecommendation(session: SessionRow): {
   const exposure = computeExposure({
     proposedPriceCents: session.proposed_price_cents,
     refundBudgetCents: session.refund_budget_cents,
-    eligibleCount: getOrdersForSession(session.id).length,
+    orders: getOrdersForSession(session.id),
+    policy: getPolicyForSession(session),
   });
   const recommended = exposure.recommendedPriceCents;
   if (recommended == null) {

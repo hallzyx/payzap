@@ -2,7 +2,13 @@
 
 import { useState } from "react";
 import { useDemo } from "@/components/demo-provider";
-import { CAMPAIGN_PROMPT_MAX_CHARS, DEFAULT_PROMO_PROMPT } from "@/lib/constants";
+import {
+  CAMPAIGN_PROMPT_MAX_CHARS,
+  DEFAULT_PROMO_PROMPT,
+  EXAMPLE_POLICY_CLEAR,
+  EXAMPLE_POLICY_VAGUE,
+  POLICY_TEXT_MAX_CHARS,
+} from "@/lib/constants";
 import { formatUsd } from "@/lib/money";
 
 export default function PayZapPage() {
@@ -12,10 +18,21 @@ export default function PayZapPage() {
   const [accepting, setAccepting] = useState(false);
   const [launching, setLaunching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [policyDraft, setPolicyDraft] = useState<string | null>(null);
+  const [compiling, setCompiling] = useState(false);
+  const [policyError, setPolicyError] = useState<string | null>(null);
 
   if (!state) return null;
 
-  const { session, metrics, product, analysis, orders } = state;
+  const { session, metrics, product, analysis, orders, policy } = state;
+  const policyValue = policyDraft ?? session.policyText ?? "";
+  const policyLocked =
+    session.expired ||
+    session.campaignStatus === "approved" ||
+    session.campaignStatus === "refunding" ||
+    session.campaignStatus === "completed" ||
+    session.campaignStatus === "partial_failure";
+  const openQuestions = policy.ambiguities.length;
   const canAnalyze =
     session.campaignStatus === "idle" || session.campaignStatus === "analyzed";
   const showRisk = analysis && session.proposedPriceCents != null;
@@ -34,6 +51,39 @@ export default function PayZapPage() {
   const done =
     session.campaignStatus === "completed" ||
     session.campaignStatus === "partial_failure";
+
+  async function postPolicy(url: string, body: unknown): Promise<boolean> {
+    setPolicyError(null);
+    const res = await fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    if (!res.ok) {
+      const data = (await res.json()) as { error?: string };
+      setPolicyError(data.error ?? "Could not update the policy");
+      return false;
+    }
+    await refresh();
+    return true;
+  }
+
+  async function compilePolicy() {
+    setCompiling(true);
+    await postPolicy("/api/policy/compile", { text: policyValue });
+    setCompiling(false);
+  }
+
+  async function useDefaultPolicy() {
+    setCompiling(true);
+    const ok = await postPolicy("/api/policy/compile", { useDefault: true });
+    if (ok) setPolicyDraft(null);
+    setCompiling(false);
+  }
+
+  async function answerQuestion(ambiguityId: string, optionId: string) {
+    await postPolicy("/api/policy/resolve", { ambiguityId, optionId });
+  }
 
   async function analyze() {
     setError(null);
@@ -140,6 +190,124 @@ export default function PayZapPage() {
 
       <div className="card-merchant mt-8 p-6">
         <p className="text-xs uppercase tracking-wider text-[var(--merchant-muted)]">
+          Price-protection policy
+        </p>
+        <p className="mt-2 text-sm text-[var(--merchant-muted)]">
+          Paste the guarantee terms you already publish. PayZap turns them into
+          rules, quotes your own words for each one, and asks when something is
+          unclear.
+        </p>
+        <textarea
+          value={policyValue}
+          onChange={(e) => setPolicyDraft(e.target.value)}
+          disabled={policyLocked}
+          maxLength={POLICY_TEXT_MAX_CHARS}
+          rows={4}
+          placeholder="Price protection lasts 7 days after purchase…"
+          className="mt-4 w-full rounded-lg border border-[var(--merchant-border)] bg-white p-3 text-sm text-[var(--merchant-text)]"
+        />
+        <div className="mt-2 flex flex-wrap gap-2 text-xs">
+          <button
+            type="button"
+            disabled={policyLocked}
+            onClick={() => setPolicyDraft(EXAMPLE_POLICY_CLEAR)}
+            className="rounded-full border border-[var(--merchant-border)] px-3 py-1 disabled:opacity-40"
+          >
+            Example: clear policy
+          </button>
+          <button
+            type="button"
+            disabled={policyLocked}
+            onClick={() => setPolicyDraft(EXAMPLE_POLICY_VAGUE)}
+            className="rounded-full border border-[var(--merchant-border)] px-3 py-1 disabled:opacity-40"
+          >
+            Example: vague policy
+          </button>
+          {policy.source !== "default" && (
+            <button
+              type="button"
+              disabled={policyLocked || compiling}
+              onClick={useDefaultPolicy}
+              className="rounded-full border border-[var(--merchant-border)] px-3 py-1 disabled:opacity-40"
+            >
+              Back to default
+            </button>
+          )}
+        </div>
+        <button
+          type="button"
+          disabled={policyLocked || compiling || policyValue.trim().length === 0}
+          onClick={compilePolicy}
+          className="mt-4 rounded-full bg-[var(--payzap-accent)] px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
+        >
+          {compiling ? "Reading policy…" : "Compile policy"}
+        </button>
+        {policyError && <p className="mt-3 text-sm text-red-700">{policyError}</p>}
+
+        <div className="mt-6 border-t border-[var(--merchant-border)] pt-4">
+          <p className="text-xs text-[var(--merchant-muted)]">
+            {policy.source === "default"
+              ? "Active rules · default demo policy"
+              : `Active rules · read by ${
+                  policy.source === "deterministic"
+                    ? "PayZap keyword parser"
+                    : policy.source === "openai"
+                      ? "OpenAI"
+                      : "DeepSeek"
+                }`}
+          </p>
+          <ul className="mt-3 space-y-3 text-sm">
+            {policy.rules.map((rule) => (
+              <li key={rule.id}>
+                <p className="font-medium">{rule.summary}</p>
+                {policy.source !== "default" && (
+                  <p className="mt-0.5 text-xs italic text-[var(--merchant-muted)]">
+                    “{rule.sourceSpan}”
+                  </p>
+                )}
+              </li>
+            ))}
+            {policy.rules.length === 0 && (
+              <li className="text-xs text-[var(--merchant-muted)]">
+                No rules yet. Answer the question below.
+              </li>
+            )}
+          </ul>
+          {policy.discarded > 0 && (
+            <p className="mt-3 text-xs text-amber-800">
+              {policy.discarded} suggested rule{policy.discarded === 1 ? "" : "s"}{" "}
+              {policy.discarded === 1 ? "was" : "were"} discarded because{" "}
+              {policy.discarded === 1 ? "it" : "they"} did not quote your text.
+            </p>
+          )}
+        </div>
+
+        {policy.ambiguities.map((q) => (
+          <div
+            key={q.id}
+            className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
+          >
+            <p className="font-medium">{q.question}</p>
+            <p className="mt-1 text-xs italic">“{q.sourceSpan}”</p>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {q.options.map((option) => (
+                <button
+                  key={option.id}
+                  type="button"
+                  disabled={policyLocked}
+                  onClick={() => answerQuestion(q.id, option.id)}
+                  className="rounded-full border border-amber-400 bg-white px-3 py-1 text-xs disabled:opacity-40"
+                >
+                  {option.label}
+                </button>
+              ))}
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="card-merchant mt-8 p-6">
+        <p className="text-xs uppercase tracking-wider text-[var(--merchant-muted)]">
           Campaign planning
         </p>
         <textarea
@@ -155,12 +323,17 @@ export default function PayZapPage() {
         </p>
         <button
           type="button"
-          disabled={!canAnalyze || analyzing || session.expired}
+          disabled={!canAnalyze || analyzing || session.expired || openQuestions > 0}
           onClick={analyze}
           className="mt-4 rounded-full bg-[var(--payzap-accent)] px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
         >
           {analyzing ? "Analyzing impact…" : "Analyze Impact"}
         </button>
+        {openQuestions > 0 && (
+          <p className="mt-3 text-sm text-amber-800">
+            Answer the open policy question above before analyzing.
+          </p>
+        )}
         {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
       </div>
 
@@ -197,6 +370,20 @@ export default function PayZapPage() {
             <p className="mt-4 text-sm font-medium text-red-700">
               Exceeds budget by {formatUsd(analysis.overByCents)}
             </p>
+          )}
+          {analysis.excludedOrders.length > 0 && (
+            <div className="mt-4 text-xs text-[var(--merchant-muted)]">
+              <p className="font-medium text-[var(--merchant-text)]">
+                Not covered by your policy ({analysis.excludedOrders.length})
+              </p>
+              <ul className="mt-1 space-y-0.5">
+                {analysis.excludedOrders.map((o) => (
+                  <li key={o.orderNumber}>
+                    {o.orderNumber} · {o.reasons.join(", ")}
+                  </li>
+                ))}
+              </ul>
+            </div>
           )}
           {analysis.recommendedPriceCents != null && (
             <div className="mt-6 border-t border-[var(--merchant-border)] pt-6">
@@ -304,6 +491,12 @@ export default function PayZapPage() {
                 {orders[0].eligibility.checks.map((c) => (
                   <li key={c.label}>
                     {c.passed ? "✓" : "✗"} {c.label}
+                    {c.cite && c.cite !== "Default demo policy" && (
+                      <span className="italic text-[var(--merchant-muted)]">
+                        {" "}
+                        · “{c.cite}”
+                      </span>
+                    )}
                   </li>
                 ))}
               </ul>

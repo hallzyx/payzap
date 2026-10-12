@@ -4,6 +4,8 @@ import { reviewCampaignPrompt, takeAnalysisTurn } from "@/lib/campaign/guard";
 import { extractCampaignIntent } from "@/lib/campaign/intent";
 import {
   buildDemoState,
+  getOrdersForSession,
+  getPolicyForSession,
   getSessionById,
   saveAnalysis,
 } from "@/lib/session/repository";
@@ -24,6 +26,14 @@ export async function POST(req: Request) {
   if (session.campaign_status !== "idle" && session.campaign_status !== "analyzed") {
     return NextResponse.json(
       { error: "Campaign is already past analysis. Reset the scenario to plan again." },
+      { status: 409 },
+    );
+  }
+
+  const policy = getPolicyForSession(session);
+  if (policy.ambiguities.length > 0) {
+    return NextResponse.json(
+      { error: "Answer the open policy question first, so the analysis uses your real terms." },
       { status: 409 },
     );
   }
@@ -80,11 +90,11 @@ export async function POST(req: Request) {
     );
   }
 
-  const state = buildDemoState(session);
   const exposure = computeExposure({
     proposedPriceCents: intent.proposedPriceCents,
     refundBudgetCents: intent.refundBudgetCents,
-    eligibleCount: state.orders.length,
+    orders: getOrdersForSession(sessionId),
+    policy,
   });
 
   saveAnalysis(sessionId, {

@@ -106,7 +106,34 @@ function migrate(database: Database.Database) {
       WHERE kind = 'refund' AND refund_id IS NOT NULL;
   `);
 
+  // Columns added after the first release. CREATE TABLE IF NOT EXISTS leaves
+  // an existing data/payzap.db untouched, so add them in place.
+  addColumnIfMissing(database, "demo_sessions", "policy_text", "TEXT");
+  addColumnIfMissing(database, "demo_sessions", "policy_json", "TEXT");
+  addColumnIfMissing(database, "demo_orders", "coupon_code", "TEXT");
+  addColumnIfMissing(
+    database,
+    "demo_orders",
+    "item_condition",
+    "TEXT NOT NULL DEFAULT 'new'",
+  );
+  addColumnIfMissing(database, "demo_orders", "buyer_note", "TEXT");
+
   topUpReadyBatches(database);
+}
+
+function addColumnIfMissing(
+  database: Database.Database,
+  table: string,
+  column: string,
+  ddl: string,
+) {
+  const columns = database.prepare(`PRAGMA table_info(${table})`).all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((c) => c.name === column)) {
+    database.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${ddl}`);
+  }
 }
 
 export function topUpReadyBatches(database: Database.Database) {
