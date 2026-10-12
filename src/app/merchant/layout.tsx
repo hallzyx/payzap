@@ -7,6 +7,7 @@ import { DemoBar } from "@/components/demo-bar";
 import { SessionExpired } from "@/components/session-expired";
 import { useDemo } from "@/components/demo-provider";
 import { STORE_NAME } from "@/lib/constants";
+import { stageOf } from "@/lib/live";
 
 type NavItem = {
   href: string;
@@ -62,11 +63,23 @@ export default function MerchantLayout({
 
   if (!state) return null;
 
+  const stage = stageOf(state);
+  const payzapBadge =
+    stage === "policy"
+      ? { text: `${state.policy.ambiguities.length} question${state.policy.ambiguities.length === 1 ? "" : "s"}`, cls: "bg-[var(--warn-soft)] text-[var(--warn)]" }
+      : stage === "review"
+        ? { text: "Review", cls: "bg-[var(--risk-soft)] text-[var(--risk)]" }
+        : stage === "approve"
+          ? { text: "Approve", cls: "bg-[var(--ok-soft)] text-[var(--ok)]" }
+          : stage === "refund"
+            ? { text: "Live", cls: "bg-[var(--payzap-accent)] text-white animate-soft-pulse" }
+            : null;
+
   return (
     <div className="merchant-shell flex min-h-screen flex-col">
       <DemoBar />
       <div className="flex min-h-0 flex-1">
-        <aside className="merchant-side hidden w-64 shrink-0 flex-col lg:flex">
+        <aside className="merchant-side hidden w-60 shrink-0 flex-col lg:flex">
           <div className="border-b border-[var(--merchant-border)] px-5 py-5">
             <p className="text-[11px] font-semibold uppercase tracking-[0.16em] text-[var(--payzap-accent)]">
               PayPal Business
@@ -101,8 +114,15 @@ export default function MerchantLayout({
                             PZ
                           </span>
                         )}
-                        <span>
-                          <span className="block leading-tight">{item.label}</span>
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between gap-2 leading-tight">
+                            {item.label}
+                            {product && payzapBadge && (
+                              <span className={`rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${payzapBadge.cls}`}>
+                                {payzapBadge.text}
+                              </span>
+                            )}
+                          </span>
                           {"hint" in item && item.hint && (
                             <span className="block text-[11px] font-normal text-[var(--merchant-muted)]">
                               {item.hint}
@@ -116,6 +136,16 @@ export default function MerchantLayout({
               </div>
             ))}
           </nav>
+          <div className="border-t border-[var(--merchant-border)] px-5 py-4 text-[11px] text-[var(--merchant-muted)]">
+            <p className="flex items-center gap-2">
+              <span className="relative flex h-2 w-2">
+                <span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[var(--ok)] opacity-50" />
+                <span className="relative h-2 w-2 rounded-full bg-[var(--ok)]" />
+              </span>
+              Connected · {state.session.isPreview ? "Sandbox preview" : "PayPal Sandbox"}
+            </p>
+            <p className="mt-1">Demo account. Not a production PayPal account.</p>
+          </div>
         </aside>
 
         <div className="flex min-w-0 flex-1 flex-col">
@@ -133,11 +163,12 @@ export default function MerchantLayout({
                   }`}
                 >
                   {item.label}
+                  {item.product && payzapBadge && <span className="ml-1">·</span>}
                 </Link>
               );
             })}
           </div>
-          <main className="min-w-0 flex-1 px-4 py-6 sm:px-8">
+          <main className="min-w-0 flex-1 px-4 py-6 sm:px-6 xl:px-8">
             {expired ? <SessionExpired /> : children}
           </main>
         </div>

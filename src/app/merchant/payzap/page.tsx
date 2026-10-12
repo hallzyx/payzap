@@ -1,509 +1,169 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useRef } from "react";
 import { useDemo } from "@/components/demo-provider";
-import {
-  CAMPAIGN_PROMPT_MAX_CHARS,
-  DEFAULT_PROMO_PROMPT,
-  EXAMPLE_POLICY_CLEAR,
-  EXAMPLE_POLICY_VAGUE,
-  POLICY_TEXT_MAX_CHARS,
-} from "@/lib/constants";
-import { formatUsd } from "@/lib/money";
+import { BuyerPreview } from "@/components/live/buyer-preview";
+import { LiveFeed } from "@/components/live/live-feed";
+import { Money } from "@/components/live/primitives";
+import { usePlanPreview } from "@/components/live/use-plan-preview";
+import { CampaignPlanner } from "@/components/payzap/campaign-planner";
+import { PolicyBrain } from "@/components/payzap/policy-brain";
+import { RefundRun } from "@/components/payzap/refund-run";
+import { RiskDecision } from "@/components/payzap/risk-decision";
+import { stageOf, type Stage } from "@/lib/live";
+
+const STAGES: Array<{ id: Stage; label: string }> = [
+  { id: "plan", label: "Policy & plan" },
+  { id: "review", label: "Risk" },
+  { id: "approve", label: "Approve" },
+  { id: "refund", label: "Refunds" },
+  { id: "buyer", label: "Buyer paid back" },
+];
+
+function StageRail({ stage }: { stage: Stage }) {
+  const idx = STAGES.findIndex((s) => s.id === (stage === "policy" ? "plan" : stage));
+  return (
+    <ol className="flex flex-wrap items-center gap-1.5 text-[11px]" aria-label="Campaign progress">
+      {STAGES.map((s, i) => {
+        const done = i < idx;
+        const current = i === idx;
+        return (
+          <li key={s.id} className="flex items-center gap-1.5">
+            <span
+              aria-current={current ? "step" : undefined}
+              className={`inline-flex items-center gap-1.5 rounded-full px-2.5 py-1 font-medium transition-colors ${
+                current
+                  ? "bg-[var(--paypal-navy)] text-white"
+                  : done
+                    ? "bg-[var(--ok-soft)] text-[var(--ok)]"
+                    : "bg-white text-[var(--merchant-muted)] ring-1 ring-[var(--merchant-border)]"
+              }`}
+            >
+              {done ? "✓" : i + 1} {s.label}
+            </span>
+            {i < STAGES.length - 1 && <span className="h-px w-3 bg-[var(--merchant-border-strong)]" />}
+          </li>
+        );
+      })}
+    </ol>
+  );
+}
 
 export default function PayZapPage() {
-  const { state, refresh } = useDemo();
-  const [prompt, setPrompt] = useState(DEFAULT_PROMO_PROMPT);
-  const [analyzing, setAnalyzing] = useState(false);
-  const [accepting, setAccepting] = useState(false);
-  const [launching, setLaunching] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [policyDraft, setPolicyDraft] = useState<string | null>(null);
-  const [compiling, setCompiling] = useState(false);
-  const [policyError, setPolicyError] = useState<string | null>(null);
+  const { state } = useDemo();
+  const { preview, loading: previewLoading } = usePlanPreview();
+  const riskRef = useRef<HTMLDivElement>(null);
+  const runRef = useRef<HTMLDivElement>(null);
+  const status = state?.session.campaignStatus;
+  const lastStatus = useRef(status);
+
+  // Bring the next decision into view when the state machine moves forward.
+  useEffect(() => {
+    if (status === lastStatus.current) return;
+    const prev = lastStatus.current;
+    lastStatus.current = status;
+    if (!prev) return;
+    const target =
+      status === "analyzed" ? riskRef.current : status === "approved" || status === "refunding" ? runRef.current : null;
+    target?.scrollIntoView({ behavior: "smooth", block: "start" });
+  }, [status]);
 
   if (!state) return null;
 
-  const { session, metrics, product, analysis, orders, policy } = state;
-  const policyValue = policyDraft ?? session.policyText ?? "";
-  const policyLocked =
-    session.expired ||
-    session.campaignStatus === "approved" ||
-    session.campaignStatus === "refunding" ||
-    session.campaignStatus === "completed" ||
-    session.campaignStatus === "partial_failure";
-  const openQuestions = policy.ambiguities.length;
-  const canAnalyze =
-    session.campaignStatus === "idle" || session.campaignStatus === "analyzed";
-  const showRisk = analysis && session.proposedPriceCents != null;
-  const campaignLive =
-    session.campaignStatus === "approved" ||
-    session.campaignStatus === "refunding" ||
-    session.campaignStatus === "completed" ||
-    session.campaignStatus === "partial_failure";
-  const exposureCents = campaignLive
-    ? metrics.totalRefundedCents
-    : showRisk && analysis
-      ? analysis.totalExposureCents
-      : 0;
-  const exposureLabel = campaignLive ? "Refunded" : "Current refund exposure";
-  const refunding = session.campaignStatus === "refunding";
-  const done =
-    session.campaignStatus === "completed" ||
-    session.campaignStatus === "partial_failure";
-
-  async function postPolicy(url: string, body: unknown): Promise<boolean> {
-    setPolicyError(null);
-    const res = await fetch(url, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(body),
-    });
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      setPolicyError(data.error ?? "Could not update the policy");
-      return false;
-    }
-    await refresh();
-    return true;
-  }
-
-  async function compilePolicy() {
-    setCompiling(true);
-    await postPolicy("/api/policy/compile", { text: policyValue });
-    setCompiling(false);
-  }
-
-  async function useDefaultPolicy() {
-    setCompiling(true);
-    const ok = await postPolicy("/api/policy/compile", { useDefault: true });
-    if (ok) setPolicyDraft(null);
-    setCompiling(false);
-  }
-
-  async function answerQuestion(ambiguityId: string, optionId: string) {
-    await postPolicy("/api/policy/resolve", { ambiguityId, optionId });
-  }
-
-  async function analyze() {
-    setError(null);
-    setAnalyzing(true);
-    const res = await fetch("/api/campaign/analyze", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ prompt }),
-    });
-    setAnalyzing(false);
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      setError(data.error ?? "Analysis failed");
-      return;
-    }
-    await refresh();
-  }
-
-  async function acceptPrice() {
-    setError(null);
-    setAccepting(true);
-    const res = await fetch("/api/campaign/launch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "accept" }),
-    });
-    setAccepting(false);
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      setError(data.error ?? "Could not accept the price");
-      return;
-    }
-    await refresh();
-  }
-
-  async function launchCampaign() {
-    setError(null);
-    setLaunching(true);
-    const res = await fetch("/api/campaign/launch", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ action: "launch" }),
-    });
-    setLaunching(false);
-    if (!res.ok) {
-      const data = (await res.json()) as { error?: string };
-      setError(data.error ?? "Launch failed");
-      return;
-    }
-    await refresh();
-  }
-
-  async function retry(orderId: string) {
-    await fetch("/api/refunds/retry", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ orderId }),
-    });
-    await refresh();
-  }
+  const { session, metrics, product, analysis } = state;
+  const stage = stageOf(state);
+  const live = ["approved", "refunding", "completed", "partial_failure"].includes(session.campaignStatus);
+  const exposureCents = live ? metrics.totalRefundedCents : analysis?.totalExposureCents ?? 0;
+  const exposureLabel = live
+    ? session.isPreview
+      ? "Refunded (simulated)"
+      : "Refunded via PayPal"
+    : analysis
+      ? "Exposure at asked price"
+      : "Current refund exposure";
 
   return (
-    <div className="mx-auto max-w-3xl">
-      <div className="flex items-center gap-3">
-        <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-[var(--payzap-accent)] text-lg font-bold text-white">
-          PZ
+    <div className="mx-auto max-w-[1240px]">
+      <header className="flex flex-wrap items-end justify-between gap-4">
+        <div className="flex items-center gap-3">
+          <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-[var(--payzap-accent)] text-base font-bold text-white shadow-sm">
+            PZ
+          </div>
+          <div>
+            <h1 className="text-2xl font-semibold tracking-tight">PayZap</h1>
+            <p className="text-sm text-[var(--merchant-muted)]">
+              A PayPal product in this demo · price protection for {product.name}
+            </p>
+          </div>
         </div>
-        <div>
-          <h1 className="text-2xl font-semibold">PayZap</h1>
-          <p className="text-sm text-[var(--merchant-muted)]">
-            A PayPal product · price protection for {product.name}
-          </p>
-        </div>
-      </div>
+        <StageRail stage={stage} />
+      </header>
 
-      {session.isPreview && !session.batchId && (
-        <div className="mt-6 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950">
-          Live PayPal Sandbox capacity is temporarily unavailable. Refunds will
-          run in clearly labeled preview simulation.
+      {session.isPreview && (
+        <div className="mt-4 flex gap-2 rounded-lg border border-[var(--warn-border)] bg-[var(--warn-soft)] px-4 py-2.5 text-xs text-[var(--warn)]">
+          <span aria-hidden="true">◐</span>
+          {session.batchId
+            ? "Preview mode: PayPal Sandbox credentials are not configured, so refunds run as a clearly labeled simulation."
+            : "Live PayPal Sandbox capacity is temporarily unavailable. Refunds will run in clearly labeled preview simulation."}
         </div>
       )}
 
-      <div className="mt-8 grid gap-4 sm:grid-cols-2">
+      <div className="mt-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
         <div className="card-merchant p-4">
           <p className="text-xs text-[var(--merchant-muted)]">Protected revenue</p>
-          <p className="metric-hero text-[var(--payzap-accent)]">
-            {formatUsd(metrics.protectedRevenueCents)}
-          </p>
-        </div>
-        <div className="card-merchant p-4">
-          <p className="text-xs text-[var(--merchant-muted)]">Protected purchases</p>
-          <p className="metric-hero">{metrics.protectedPurchases}</p>
+          <p className="metric-hero mt-1 text-[var(--paypal-navy)]"><Money cents={metrics.protectedRevenueCents} /></p>
+          <p className="mt-1 text-[11px] text-[var(--merchant-muted)]">{metrics.protectedPurchases} PayPal orders under guarantee</p>
         </div>
         <div className="card-merchant p-4">
           <p className="text-xs text-[var(--merchant-muted)]">{exposureLabel}</p>
-          <p className="metric-hero">{formatUsd(exposureCents)}</p>
+          <p className={`metric-hero mt-1 ${live ? "text-[var(--ok)]" : analysis?.exceedsBudget ? "text-[var(--risk)]" : ""}`}>
+            <Money cents={exposureCents} />
+          </p>
+          <p className="mt-1 text-[11px] text-[var(--merchant-muted)]">
+            {live
+              ? `${metrics.completedRefunds} refunds completed`
+              : analysis?.refundBudgetCents != null
+                ? `Budget ${new Intl.NumberFormat("en-US", { style: "currency", currency: "USD", maximumFractionDigits: 0 }).format(analysis.refundBudgetCents / 100)}`
+                : "No price change yet"}
+          </p>
         </div>
         <div className="card-merchant p-4">
-          <p className="text-xs text-[var(--merchant-muted)]">Product · current price</p>
-          <p className="mt-1 font-medium">{product.name}</p>
-          <p className="tabular-nums">{formatUsd(product.priceCents)}</p>
+          <p className="text-xs text-[var(--merchant-muted)]">Store price · {product.name}</p>
+          <p className="metric-hero mt-1"><Money cents={product.priceCents} /></p>
+          <p className="mt-1 text-[11px] text-[var(--merchant-muted)]">{product.stock} in stock · {live ? "campaign live" : "no campaign"}</p>
         </div>
-      </div>
-
-      <div className="card-merchant mt-8 p-6">
-        <p className="text-xs uppercase tracking-wider text-[var(--merchant-muted)]">
-          Price-protection policy
-        </p>
-        <p className="mt-2 text-sm text-[var(--merchant-muted)]">
-          Paste the guarantee terms you already publish. PayZap turns them into
-          rules, quotes your own words for each one, and asks when something is
-          unclear.
-        </p>
-        <textarea
-          value={policyValue}
-          onChange={(e) => setPolicyDraft(e.target.value)}
-          disabled={policyLocked}
-          maxLength={POLICY_TEXT_MAX_CHARS}
-          rows={4}
-          placeholder="Price protection lasts 7 days after purchase…"
-          className="mt-4 w-full rounded-lg border border-[var(--merchant-border)] bg-white p-3 text-sm text-[var(--merchant-text)]"
-        />
-        <div className="mt-2 flex flex-wrap gap-2 text-xs">
-          <button
-            type="button"
-            disabled={policyLocked}
-            onClick={() => setPolicyDraft(EXAMPLE_POLICY_CLEAR)}
-            className="rounded-full border border-[var(--merchant-border)] px-3 py-1 disabled:opacity-40"
-          >
-            Example: clear policy
-          </button>
-          <button
-            type="button"
-            disabled={policyLocked}
-            onClick={() => setPolicyDraft(EXAMPLE_POLICY_VAGUE)}
-            className="rounded-full border border-[var(--merchant-border)] px-3 py-1 disabled:opacity-40"
-          >
-            Example: vague policy
-          </button>
-          {policy.source !== "default" && (
-            <button
-              type="button"
-              disabled={policyLocked || compiling}
-              onClick={useDefaultPolicy}
-              className="rounded-full border border-[var(--merchant-border)] px-3 py-1 disabled:opacity-40"
-            >
-              Back to default
-            </button>
-          )}
-        </div>
-        <button
-          type="button"
-          disabled={policyLocked || compiling || policyValue.trim().length === 0}
-          onClick={compilePolicy}
-          className="mt-4 rounded-full bg-[var(--payzap-accent)] px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
-        >
-          {compiling ? "Reading policy…" : "Compile policy"}
-        </button>
-        {policyError && <p className="mt-3 text-sm text-red-700">{policyError}</p>}
-
-        <div className="mt-6 border-t border-[var(--merchant-border)] pt-4">
-          <p className="text-xs text-[var(--merchant-muted)]">
-            {policy.source === "default"
-              ? "Active rules · default demo policy"
-              : `Active rules · read by ${
-                  policy.source === "deterministic"
-                    ? "PayZap keyword parser"
-                    : policy.source === "openai"
-                      ? "OpenAI"
-                      : "DeepSeek"
-                }`}
-          </p>
-          <ul className="mt-3 space-y-3 text-sm">
-            {policy.rules.map((rule) => (
-              <li key={rule.id}>
-                <p className="font-medium">{rule.summary}</p>
-                {policy.source !== "default" && (
-                  <p className="mt-0.5 text-xs italic text-[var(--merchant-muted)]">
-                    “{rule.sourceSpan}”
-                  </p>
-                )}
-              </li>
-            ))}
-            {policy.rules.length === 0 && (
-              <li className="text-xs text-[var(--merchant-muted)]">
-                No rules yet. Answer the question below.
-              </li>
+        <div className="card-merchant p-4">
+          <p className="text-xs text-[var(--merchant-muted)]">Policy</p>
+          <p className="mt-1 text-lg font-semibold">
+            {state.policy.rules.length} rule{state.policy.rules.length === 1 ? "" : "s"}
+            {state.policy.ambiguities.length > 0 && (
+              <span className="ml-2 rounded-full bg-[var(--warn-soft)] px-2 py-0.5 text-[11px] text-[var(--warn)]">
+                {state.policy.ambiguities.length} question{state.policy.ambiguities.length === 1 ? "" : "s"}
+              </span>
             )}
-          </ul>
-          {policy.discarded > 0 && (
-            <p className="mt-3 text-xs text-amber-800">
-              {policy.discarded} suggested rule{policy.discarded === 1 ? "" : "s"}{" "}
-              {policy.discarded === 1 ? "was" : "were"} discarded because{" "}
-              {policy.discarded === 1 ? "it" : "they"} did not quote your text.
-            </p>
-          )}
+          </p>
+          <p className="mt-1 text-[11px] text-[var(--merchant-muted)]">
+            {preview ? `${preview.coverage.filter((c) => c.covered).length} of ${preview.coverage.length} orders covered` : "…"}
+          </p>
         </div>
+      </div>
 
-        {policy.ambiguities.map((q) => (
-          <div
-            key={q.id}
-            className="mt-4 rounded-lg border border-amber-300 bg-amber-50 p-4 text-sm text-amber-950"
-          >
-            <p className="font-medium">{q.question}</p>
-            <p className="mt-1 text-xs italic">“{q.sourceSpan}”</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              {q.options.map((option) => (
-                <button
-                  key={option.id}
-                  type="button"
-                  disabled={policyLocked}
-                  onClick={() => answerQuestion(q.id, option.id)}
-                  className="rounded-full border border-amber-400 bg-white px-3 py-1 text-xs disabled:opacity-40"
-                >
-                  {option.label}
-                </button>
-              ))}
-            </div>
+      <div className="mt-5 grid items-start gap-5 xl:grid-cols-[minmax(0,1fr)_320px]">
+        <div className="min-w-0 space-y-5">
+          <PolicyBrain preview={preview} previewLoading={previewLoading} />
+          <CampaignPlanner />
+          <div ref={riskRef} className="scroll-mt-20">
+            <RiskDecision preview={preview} />
           </div>
-        ))}
-      </div>
-
-      <div className="card-merchant mt-8 p-6">
-        <p className="text-xs uppercase tracking-wider text-[var(--merchant-muted)]">
-          Campaign planning
-        </p>
-        <textarea
-          value={prompt}
-          onChange={(e) => setPrompt(e.target.value)}
-          disabled={!canAnalyze || session.expired}
-          maxLength={CAMPAIGN_PROMPT_MAX_CHARS}
-          rows={3}
-          className="mt-4 w-full rounded-lg border border-[var(--merchant-border)] bg-white p-3 text-sm text-[var(--merchant-text)]"
-        />
-        <p className="mt-2 text-xs text-[var(--merchant-muted)]">
-          One short sentence: the sale price and the refund budget.
-        </p>
-        <button
-          type="button"
-          disabled={!canAnalyze || analyzing || session.expired || openQuestions > 0}
-          onClick={analyze}
-          className="mt-4 rounded-full bg-[var(--payzap-accent)] px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
-        >
-          {analyzing ? "Analyzing impact…" : "Analyze Impact"}
-        </button>
-        {openQuestions > 0 && (
-          <p className="mt-3 text-sm text-amber-800">
-            Answer the open policy question above before analyzing.
-          </p>
-        )}
-        {error && <p className="mt-3 text-sm text-red-700">{error}</p>}
-      </div>
-
-      {showRisk && analysis && (
-        <div className="card-merchant mt-6 animate-fade-up p-6">
-          <p className="text-xs uppercase text-red-700">Campaign risk</p>
-          <dl className="mt-4 grid grid-cols-2 gap-x-6 gap-y-3 text-sm">
-            <div>
-              <dt className="text-[var(--merchant-muted)]">Proposed price</dt>
-              <dd className="tabular-nums text-lg">
-                {formatUsd(analysis.proposedPriceCents)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[var(--merchant-muted)]">Protected customers</dt>
-              <dd className="tabular-nums text-lg">{analysis.eligibleCount}</dd>
-            </div>
-            <div>
-              <dt className="text-[var(--merchant-muted)]">Expected refunds</dt>
-              <dd className="tabular-nums text-lg text-red-700">
-                {formatUsd(analysis.totalExposureCents)}
-              </dd>
-            </div>
-            <div>
-              <dt className="text-[var(--merchant-muted)]">Refund budget</dt>
-              <dd className="tabular-nums text-lg">
-                {analysis.refundBudgetCents != null
-                  ? formatUsd(analysis.refundBudgetCents)
-                  : "—"}
-              </dd>
-            </div>
-          </dl>
-          {analysis.exceedsBudget && (
-            <p className="mt-4 text-sm font-medium text-red-700">
-              Exceeds budget by {formatUsd(analysis.overByCents)}
-            </p>
-          )}
-          {analysis.excludedOrders.length > 0 && (
-            <div className="mt-4 text-xs text-[var(--merchant-muted)]">
-              <p className="font-medium text-[var(--merchant-text)]">
-                Not covered by your policy ({analysis.excludedOrders.length})
-              </p>
-              <ul className="mt-1 space-y-0.5">
-                {analysis.excludedOrders.map((o) => (
-                  <li key={o.orderNumber}>
-                    {o.orderNumber} · {o.reasons.join(", ")}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {analysis.recommendedPriceCents != null && (
-            <div className="mt-6 border-t border-[var(--merchant-border)] pt-6">
-              <p className="text-xs uppercase text-emerald-800">Recommendation</p>
-              <p className="mt-2 text-2xl tabular-nums">
-                {formatUsd(analysis.recommendedPriceCents)}
-              </p>
-              <p className="mt-2 text-sm text-[var(--merchant-muted)]">
-                Expected total refunds{" "}
-                {formatUsd(analysis.recommendedExposureCents ?? 0)} across{" "}
-                {analysis.eligibleCount} customers.
-              </p>
-              <p className="mt-2 text-xs text-[var(--merchant-muted)]">
-                {analysis.reason}
-              </p>
-              {session.campaignStatus === "analyzed" && (
-                <button
-                  type="button"
-                  disabled={accepting || session.expired}
-                  onClick={acceptPrice}
-                  className="mt-6 rounded-full bg-[var(--paypal-navy)] px-6 py-3 text-sm font-medium text-white disabled:opacity-40"
-                >
-                  {accepting
-                    ? "Saving…"
-                    : `Use ${formatUsd(analysis.recommendedPriceCents)}`}
-                </button>
-              )}
-              {session.campaignStatus === "accepted" && (
-                <div className="mt-6">
-                  <p className="text-sm text-emerald-800">
-                    {formatUsd(analysis.recommendedPriceCents ?? 0)} is selected.
-                    Launching changes the store price and executes partial refunds
-                    through PayPal Sandbox.
-                  </p>
-                  <button
-                    type="button"
-                    disabled={launching || session.expired}
-                    onClick={launchCampaign}
-                    className="mt-4 rounded-full bg-emerald-700 px-6 py-3 text-sm font-medium text-white disabled:opacity-40"
-                  >
-                    {launching ? "Launching…" : "Launch campaign"}
-                  </button>
-                </div>
-              )}
-              <p className="mt-2 text-[10px] text-[var(--merchant-muted)]">
-                The recommendation stays advisory until you accept it. Launch is a
-                separate approval and moves money.
-              </p>
-            </div>
-          )}
+          <div ref={runRef} className="scroll-mt-20">
+            <RefundRun />
+          </div>
         </div>
-      )}
-
-      {(refunding || done) && (
-        <div className="card-merchant mt-6 p-6">
-          <p className="text-xs uppercase text-[var(--merchant-muted)]">
-            Refund execution · PayPal Sandbox
-          </p>
-          <ul className="mt-4 space-y-2 font-mono text-xs">
-            {orders.map((order, i) => {
-              let label = "Queued";
-              if (order.refundStatus === "completed") {
-                label = `✓ ${formatUsd(order.priceAdjustmentCents)} refunded`;
-              } else if (order.refundStatus === "processing") {
-                label = "Processing";
-              } else if (order.refundStatus === "failed") {
-                label = "Failed";
-              } else if (order.refundStatus === "skipped") {
-                label = "Skipped";
-              }
-              return (
-                <li
-                  key={order.id}
-                  className="flex items-center justify-between border-b border-[var(--merchant-border)] py-2"
-                >
-                  <span>
-                    {i + 1} / {orders.length} · {order.orderNumber}
-                  </span>
-                  <span className="flex items-center gap-2">
-                    {label}
-                    {order.refundStatus === "failed" && (
-                      <button
-                        type="button"
-                        onClick={() => retry(order.id)}
-                        className="text-[var(--payzap-accent)]"
-                      >
-                        Retry
-                      </button>
-                    )}
-                  </span>
-                </li>
-              );
-            })}
-          </ul>
-          {done && (
-            <p className="mt-4 text-sm">
-              {metrics.completedRefunds} / {orders.length} completed · Total
-              refunded {formatUsd(metrics.totalRefundedCents)}
-            </p>
-          )}
-          {orders[0]?.eligibility && (
-            <div className="mt-6 rounded border border-[var(--merchant-border)] p-4 text-xs">
-              <p className="font-medium">Sample eligibility · {orders[0].orderNumber}</p>
-              <ul className="mt-2 space-y-1">
-                {orders[0].eligibility.checks.map((c) => (
-                  <li key={c.label}>
-                    {c.passed ? "✓" : "✗"} {c.label}
-                    {c.cite && c.cite !== "Default demo policy" && (
-                      <span className="italic text-[var(--merchant-muted)]">
-                        {" "}
-                        · “{c.cite}”
-                      </span>
-                    )}
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-        </div>
-      )}
+        <aside className="space-y-5 xl:sticky xl:top-16">
+          <BuyerPreview />
+          <LiveFeed max={7} />
+        </aside>
+      </div>
     </div>
   );
 }
